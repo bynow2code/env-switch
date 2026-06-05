@@ -1,0 +1,19 @@
+{
+  "name": "env-switch",
+  "version": "1.0.0",
+  "description": "ENV 配置操作工具",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "node server/index.js",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "concurrently": "^8.2.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.8.3"
+  }
+}
