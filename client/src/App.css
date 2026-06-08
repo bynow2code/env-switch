@@ -175,8 +175,8 @@ body {
 /* Project List */
 .project-list {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 /* Project Card */
@@ -187,6 +187,9 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   border: 1px solid #e5e7eb;
   transition: box-shadow 0.2s;
+  flex: 1 1 calc(33.333% - 8px);
+  min-width: 280px;
+  max-width: calc(33.333% - 8px);
 }
 
 .project-card:hover {

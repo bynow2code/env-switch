@@ -2,6 +2,7 @@ node_modules/
 dist/
 client/dist/
 release/
+public/
 
 # 本地数据文件（包含用户个人项目路径）
 server/data.json
