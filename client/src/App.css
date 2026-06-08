@@ -14,21 +14,21 @@ body {
 .app {
   max-width: 900px;
   margin: 0 auto;
-  padding: 24px 20px 60px;
+  padding: 10px 16px 24px;
 }
 
 /* Header */
 .app-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 32px;
-  padding-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 2px solid #e8ecf1;
 }
 
 .app-header h1 {
-  font-size: 28px;
+  font-size: 18px;
   font-weight: 700;
   color: #4f46e5;
   letter-spacing: -0.5px;
@@ -41,12 +41,12 @@ body {
 }
 
 .btn-add {
-  padding: 10px 22px;
+  padding: 8px 16px;
   background: #4f46e5;
   color: #fff;
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: 6px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
@@ -176,14 +176,14 @@ body {
 .project-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 8px;
 }
 
 /* Project Card */
 .project-card {
   background: #fff;
-  border-radius: 12px;
-  padding: 24px;
+  border-radius: 8px;
+  padding: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   border: 1px solid #e5e7eb;
   transition: box-shadow 0.2s;
@@ -197,7 +197,7 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 18px;
+  margin-bottom: 6px;
 }
 
 .project-info {
@@ -206,10 +206,10 @@ body {
 }
 
 .project-name {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   color: #1a1a2e;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .project-dir {
@@ -220,16 +220,16 @@ body {
 }
 
 .btn-delete {
-  padding: 6px 14px;
+  padding: 3px 8px;
   background: transparent;
   color: #ef4444;
   border: 1px solid #fecaca;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 4px;
+  font-size: 11px;
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
-  margin-left: 12px;
+  margin-left: 8px;
 }
 
 .btn-delete:hover {
@@ -240,44 +240,44 @@ body {
 /* Current Env */
 .env-current {
   background: #f9fafb;
-  border-radius: 10px;
-  padding: 16px 18px;
-  margin-bottom: 16px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
 }
 
 .env-label {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
 }
 
 .env-values {
   display: flex;
-  gap: 24px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
 .env-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .env-key {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #6b7280;
   background: #e5e7eb;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Consolas', 'Monaco', monospace;
 }
 
 .env-value {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #1a1a2e;
   font-family: 'Consolas', 'Monaco', monospace;
@@ -327,22 +327,22 @@ body {
 /* Env Files */
 .env-files {
   border-top: 1px solid #f3f4f6;
-  padding-top: 16px;
+  padding-top: 6px;
 }
 
 .env-file-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .env-file-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 4px 8px;
   background: #f9fafb;
-  border-radius: 8px;
+  border-radius: 4px;
   transition: background 0.15s;
 }
 
@@ -351,19 +351,19 @@ body {
 }
 
 .env-file-name {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   color: #374151;
   font-family: 'Consolas', 'Monaco', monospace;
 }
 
 .btn-switch {
-  padding: 6px 16px;
+  padding: 4px 12px;
   background: #4f46e5;
   color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: 4px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;

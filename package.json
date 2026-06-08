@@ -2,18 +2,55 @@
   "name": "env-switch",
   "version": "1.0.0",
   "description": "ENV 配置操作工具",
+  "main": "electron-main.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "node server/index.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "start": "node server/index.js"
+    "electron-dev": "npm run build && electron .",
+    "electron-build": "npm run build && electron-builder --win --x64",
+    "electron-build-dir": "npm run build && electron-builder --dir --win",
+    "start": "electron ."
   },
   "dependencies": {
     "chokidar": "^3.6.0",
-    "concurrently": "^8.2.2",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^34.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.envswitch.app",
+    "productName": "EnvSwitch",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron-main.js",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/favicon.svg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

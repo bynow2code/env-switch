@@ -14,9 +14,19 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json());
 
-// 数据存储文件
-const DATA_FILE = path.join(__dirname, 'data.json');
+// 获取应用根目录（兼容开发模式和 pkg 打包）
+// pkg 打包时 process.execPath 指向 exe；开发时使用 __dirname
+const APP_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
+const ROOT_DIR = process.pkg ? APP_DIR : path.join(__dirname, '..');
+// 数据存储文件（打包后存储在 exe 同目录的 server 子目录）
+const DATA_DIR = path.join(APP_DIR, 'server');
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const watchers = new Map(); // projectId -> chokidar watcher
+
+// 确保数据目录存在
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // 读取存储的项目数据
 function loadData() {
@@ -29,7 +39,11 @@ function loadData() {
 }
 
 function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('保存数据失败:', e.message);
+  }
 }
 
 // 检测是否为 WSL 路径，并返回 { distro, linuxPath }
@@ -260,15 +274,32 @@ app.post('/api/projects', (req, res) => {
   const { dir } = req.body;
   if (!dir) return res.status(400).json({ error: '请提供项目目录' });
 
-  const normalizedDir = path.resolve(dir);
-  if (!fs.existsSync(normalizedDir)) {
+  // WSL 路径保持原样，本地路径做规范化
+  const normalizedDir = isWslPath(dir) ? dir : path.resolve(dir);
+
+  // 检查目录是否存在
+  let exists;
+  if (isWslPath(normalizedDir)) {
+    const parsed = parseWslPath(normalizedDir);
+    try {
+      const cmd = `wsl.exe -d ${parsed.distro} test -d "${parsed.linuxPath}" && echo OK || echo NO`;
+      const result = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
+      exists = result === 'OK';
+    } catch (e) {
+      exists = false;
+    }
+  } else {
+    exists = fs.existsSync(normalizedDir);
+  }
+
+  if (!exists) {
     return res.status(400).json({ error: '目录不存在' });
   }
 
   const data = loadData();
 
-  // 检查是否已存在
-  if (data.projects.find(p => p.dir === normalizedDir)) {
+  // 检查是否已存在（统一用小写比较）
+  if (data.projects.find(p => p.dir.toLowerCase() === normalizedDir.toLowerCase())) {
     return res.status(400).json({ error: '该项目已添加' });
   }
 
@@ -389,7 +420,8 @@ app.get('/api/projects/:id/env-file/:fileName', (req, res) => {
 });
 
 // 静态文件服务（生产环境）
-const clientDist = path.join(__dirname, '..', 'client', 'dist');
+// 打包后从 exe 所在目录读取前端文件
+const clientDist = path.join(APP_DIR, 'public');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {
@@ -418,6 +450,39 @@ data.projects.forEach(p => {
 });
 
 const PORT = process.env.PORT || 3001;
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`端口 ${PORT} 已被占用，尝试关闭现有进程...`);
+    const { execSync } = require('child_process');
+    try {
+      execSync(`taskkill /F /IM node.exe /FI "WINDOWTITLE eq EnvSwitch*" 2>nul || true`, { stdio: 'pipe' });
+      execSync(`netstat -ano | findstr :${PORT} | findstr LISTENING`, { stdio: 'pipe' });
+      const pids = execSync(`for /f "tokens=5" %a in ('netstat -ano ^| findstr :${PORT} ^| findstr LISTENING') do @echo %a`, { encoding: 'utf-8' })
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s && s !== '');
+      pids.forEach(pid => {
+        try {
+          execSync(`taskkill /F /PID ${pid} 2>nul || true`, { stdio: 'pipe' });
+        } catch (e) {}
+      });
+      console.log('已关闭旧进程，3秒后重试...');
+      setTimeout(() => {
+        server.listen(PORT, () => {
+          console.log(`EnvSwitch server running on http://localhost:${PORT}`);
+        });
+      }, 3000);
+    } catch (e) {
+      console.error('无法关闭旧进程:', e.message);
+      process.exit(1);
+    }
+  } else {
+    console.error('服务器错误:', err);
+    process.exit(1);
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`EnvSwitch server running on http://localhost:${PORT}`);
 });
