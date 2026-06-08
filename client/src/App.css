@@ -259,8 +259,8 @@ body {
 
 .env-values {
   display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .env-item {
