@@ -481,7 +481,7 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true
     },
-    icon: path.join(__dirname, 'public', 'favicon.svg')
+    icon: path.join(__dirname, 'assets', 'icons', '256x256.png')
   });
 
   // 隐藏菜单栏
