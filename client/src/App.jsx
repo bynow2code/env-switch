@@ -1,8 +1,114 @@
 import { useState, useEffect, useCallback } from 'react'
 import { io } from 'socket.io-client'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import './App.css'
 
 const API_BASE = '/api'
+
+// 可拖拽的项目卡片
+function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: project.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className={`project-card${isDragging ? ' dragging' : ''}`}>
+      <div className="project-header">
+        <div className="project-info">
+          <h3 className="project-name">{project.name}</h3>
+          <span className="project-dir" title={project.dir}>{project.dir}</span>
+        </div>
+        <div className="project-actions">
+          <button
+            className="btn-drag"
+            {...attributes}
+            {...listeners}
+            title="拖动排序"
+          >
+            ⠿
+          </button>
+          <button
+            className="btn-delete"
+            onClick={() => onDelete(project.id)}
+            title="删除项目"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+
+      <div className="env-current">
+        <div className="env-label">当前配置</div>
+        <div className="env-values">
+          <div className="env-item">
+            <span className="env-key">APP_NAME</span>
+            <span className="env-value">{project.appName || <em>未设置</em>}</span>
+          </div>
+          <div className="env-item">
+            <span className="env-key">APP_ENV</span>
+            <span className={`env-value env-badge ${project.appEnv || ''}`}>
+              {project.appEnv || <em>未设置</em>}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {project.envFiles.length > 0 && (
+        <div className="env-files">
+          <div className="env-label">环境配置切换</div>
+          <div className="env-file-list">
+            {project.envFiles.map(file => {
+              const isSwitching = switching[project.id] === file
+              return (
+                <div key={file} className="env-file-item">
+                  <span className="env-file-name">{file}</span>
+                  <button
+                    className={`btn-switch ${isSwitching ? 'switching' : ''}`}
+                    onClick={() => onSwitch(project.id, file)}
+                    disabled={!!switching[project.id]}
+                  >
+                    {isSwitching ? '切换中...' : '切换'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {project.envFiles.length === 0 && (
+        <div className="env-files-empty">
+          暂无 .env.xxx 配置文件
+        </div>
+      )}
+    </div>
+  )
+}
 
 function App() {
   const [projects, setProjects] = useState([])
@@ -10,10 +116,15 @@ function App() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [newDir, setNewDir] = useState('')
   const [error, setError] = useState('')
-  const [switching, setSwitching] = useState({}) // projectId -> envFileName
+  const [switching, setSwitching] = useState({})
   const [socket, setSocket] = useState(null)
 
-  // 加载项目列表
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    })
+  )
+
   const loadProjects = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/projects`)
@@ -26,12 +137,10 @@ function App() {
     }
   }, [])
 
-  // 初始加载
   useEffect(() => {
     loadProjects()
   }, [loadProjects])
 
-  // WebSocket 实时更新
   useEffect(() => {
     const s = io('/', { transports: ['websocket', 'polling'] })
     setSocket(s)
@@ -49,7 +158,6 @@ function App() {
     return () => s.disconnect()
   }, [])
 
-  // 添加项目
   const addProject = async () => {
     setError('')
     if (!newDir.trim()) {
@@ -75,7 +183,6 @@ function App() {
     }
   }
 
-  // 删除项目
   const deleteProject = async (id) => {
     try {
       const res = await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' })
@@ -87,7 +194,6 @@ function App() {
     }
   }
 
-  // 切换 env 配置
   const switchEnv = async (projectId, envFileName) => {
     setSwitching(prev => ({ ...prev, [projectId]: envFileName }))
     try {
@@ -115,6 +221,27 @@ function App() {
     }
   }
 
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    setProjects(prev => {
+      const oldIndex = prev.findIndex(p => p.id === active.id)
+      const newIndex = prev.findIndex(p => p.id === over.id)
+      const newOrder = arrayMove(prev, oldIndex, newIndex)
+
+      // 持久化排序到后端
+      const ids = newOrder.map(p => p.id)
+      fetch(`${API_BASE}/projects/reorder`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      }).catch(e => console.error('保存排序失败:', e))
+
+      return newOrder
+    })
+  }
+
   if (loading) {
     return <div className="loading">加载中...</div>
   }
@@ -129,7 +256,6 @@ function App() {
         </button>
       </header>
 
-      {/* 添加项目对话框 */}
       {showAddDialog && (
         <div className="dialog-overlay" onClick={() => setShowAddDialog(false)}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
@@ -154,76 +280,32 @@ function App() {
         </div>
       )}
 
-      {/* 项目列表 */}
       <div className="project-list">
         {projects.length === 0 ? (
           <div className="empty-state">
             <p>暂无项目，点击 "+ 添加项目" 开始使用</p>
           </div>
         ) : (
-          projects.map(project => (
-            <div key={project.id} className="project-card">
-              <div className="project-header">
-                <div className="project-info">
-                  <h3 className="project-name">{project.name}</h3>
-                  <span className="project-dir" title={project.dir}>{project.dir}</span>
-                </div>
-                <button
-                  className="btn-delete"
-                  onClick={() => deleteProject(project.id)}
-                  title="删除项目"
-                >
-                  删除
-                </button>
-              </div>
-
-              <div className="env-current">
-                <div className="env-label">当前配置</div>
-                <div className="env-values">
-                  <div className="env-item">
-                    <span className="env-key">APP_NAME</span>
-                    <span className="env-value">{project.appName || <em>未设置</em>}</span>
-                  </div>
-                  <div className="env-item">
-                    <span className="env-key">APP_ENV</span>
-                    <span className={`env-value env-badge ${project.appEnv || ''}`}>
-                      {project.appEnv || <em>未设置</em>}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* .env.xxx 切换列表 */}
-              {project.envFiles.length > 0 && (
-                <div className="env-files">
-                  <div className="env-label">环境配置切换</div>
-                  <div className="env-file-list">
-                    {project.envFiles.map(file => {
-                      const isSwitching = switching[project.id] === file
-                      return (
-                        <div key={file} className="env-file-item">
-                          <span className="env-file-name">{file}</span>
-                          <button
-                            className={`btn-switch ${isSwitching ? 'switching' : ''}`}
-                            onClick={() => switchEnv(project.id, file)}
-                            disabled={!!switching[project.id]}
-                          >
-                            {isSwitching ? '切换中...' : '切换'}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {project.envFiles.length === 0 && (
-                <div className="env-files-empty">
-                  暂无 .env.xxx 配置文件
-                </div>
-              )}
-            </div>
-          ))
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={projects.map(p => p.id)}
+              strategy={rectSortingStrategy}
+            >
+              {projects.map(project => (
+                <SortableProjectCard
+                  key={project.id}
+                  project={project}
+                  onDelete={deleteProject}
+                  onSwitch={switchEnv}
+                  switching={switching}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </div>

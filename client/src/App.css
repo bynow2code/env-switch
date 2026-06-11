@@ -190,10 +190,15 @@ body {
   flex: 1 1 calc(33.333% - 8px);
   min-width: 280px;
   max-width: calc(33.333% - 8px);
+  cursor: default;
 }
 
 .project-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.project-card.dragging {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .project-header {
@@ -232,12 +237,43 @@ body {
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
-  margin-left: 8px;
 }
 
 .btn-delete:hover {
   background: #fef2f2;
   border-color: #ef4444;
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.btn-drag {
+  padding: 3px 4px;
+  background: transparent;
+  color: #9ca3af;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: grab;
+  line-height: 1;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.btn-drag:hover {
+  color: #4f46e5;
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.btn-drag:active {
+  cursor: grabbing;
 }
 
 /* Current Env */

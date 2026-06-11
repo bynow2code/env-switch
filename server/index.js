@@ -327,6 +327,31 @@ app.post('/api/projects', (req, res) => {
   });
 });
 
+// 更新项目排序
+app.put('/api/projects/reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) {
+    return res.status(400).json({ error: '请提供 ids 数组' });
+  }
+
+  const data = loadData();
+  const newOrder = [];
+
+  // 按传入的顺序重新排列
+  for (const id of ids) {
+    const project = data.projects.find(p => p.id === id);
+    if (project) {
+      newOrder.push(project);
+    }
+  }
+
+  // 保留不在 ids 中的项目（理论上不应该有）
+  const remaining = data.projects.filter(p => !ids.includes(p.id));
+  data.projects = [...newOrder, ...remaining];
+  saveData(data);
+  res.json({ success: true });
+});
+
 // 删除项目
 app.delete('/api/projects/:id', (req, res) => {
   const data = loadData();
