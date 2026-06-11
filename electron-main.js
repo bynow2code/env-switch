@@ -236,7 +236,7 @@ function setupWatcher(projectId, projectDir) {
 }
 
 // 启动 Express 服务器
-function startServer() {
+async function startServer() {
   const expressApp = express();
   server = http.createServer(expressApp);
   io = new Server(server, { cors: { origin: '*' } });
@@ -446,27 +446,71 @@ function startServer() {
     }
   });
 
-  // 找一个可用端口
-  let PORT = 3001;
-  
-  function tryListen(port) {
-    return new Promise((resolve, reject) => {
-      server.listen(port, '127.0.0.1', () => {
-        resolve(port);
-      }).on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-          server.close();
-          tryListen(port + 1).then(resolve).catch(reject);
-        } else {
-          reject(err);
-        }
+  // port.txt 方案：动态分配端口
+  const PORT_FILE = path.join(__dirname, 'public', 'port.txt');
+  const START_PORT = 3001;
+
+  function isPortFree(port) {
+    return new Promise((resolve) => {
+      const tester = require('net').createServer();
+      tester.once('error', (err) => {
+        if (err.code === 'EADDRINUSE') resolve(false);
+        else resolve(false);
       });
+      tester.once('listening', () => {
+        tester.close();
+        resolve(true);
+      });
+      tester.listen(port, '127.0.0.1');
     });
   }
 
-  return tryListen(PORT).then(port => {
-    console.log(`Server running on http://127.0.0.1:${port}`);
-    return port;
+  async function findAvailablePort() {
+    // 优先读取 port.txt 中的端口
+    let savedPort = null;
+    try {
+      if (fs.existsSync(PORT_FILE)) {
+        savedPort = parseInt(fs.readFileSync(PORT_FILE, 'utf8').trim(), 10);
+      }
+    } catch (e) { /* ignore */ }
+
+    if (savedPort && savedPort >= 1024 && savedPort <= 65535) {
+      if (await isPortFree(savedPort)) {
+        console.log(`[PORT] 使用保存的端口: ${savedPort}`);
+        return savedPort;
+      }
+      console.log(`[PORT] 保存的端口 ${savedPort} 已被占用，重新分配`);
+    }
+
+    // 从 3001 开始找一个可用端口
+    let port = START_PORT;
+    while (port < 3200) {
+      if (await isPortFree(port)) {
+        console.log(`[PORT] 找到可用端口: ${port}`);
+        return port;
+      }
+      port++;
+    }
+    return START_PORT;
+  }
+
+  const chosenPort = await findAvailablePort();
+
+  return new Promise((resolve, reject) => {
+    server.listen(chosenPort, '127.0.0.1', () => {
+      // 写入 port.txt
+      try {
+        const portDir = path.dirname(PORT_FILE);
+        if (!fs.existsSync(portDir)) fs.mkdirSync(portDir, { recursive: true });
+        fs.writeFileSync(PORT_FILE, String(chosenPort));
+        console.log(`Server running on http://127.0.0.1:${chosenPort}`);
+      } catch (e) {
+        console.log(`[PORT] 写入 port.txt 失败:`, e.message);
+      }
+      resolve(chosenPort);
+    }).on('error', (err) => {
+      reject(err);
+    });
   });
 }
 
@@ -481,7 +525,7 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true
     },
-    icon: path.join(__dirname, 'assets', 'icons', '256x256.png')
+    icon: path.join(__dirname, 'public', 'icon.ico')
   });
 
   // 隐藏菜单栏
