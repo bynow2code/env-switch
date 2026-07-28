@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -8,14 +8,36 @@ const fs = require('fs');
 const chokidar = require('chokidar');
 const { execSync } = require('child_process');
 
+// 捕获「真实的」userData：下方开发模式会把 userData 重定向到临时目录以解决 Chromium
+// 缓存目录写权限问题，但项目数据（data.json）仍需落在原始 userData 下，故先固定下来。
+const REAL_USER_DATA = app.getPath('userData');
+
+// 开发模式：将 Chromium 缓存（HTTP 磁盘缓存 + GPU 缓存）重定向到用户临时目录下可写目录，
+// 规避 Windows 上默认 userData 缓存目录出现「拒绝访问 (0x5) / Unable to move the cache /
+// Gpu Cache Creation failed」等无害噪声日志。仅开发模式生效；打包后沿用默认 userData，数据落点不变。
+if (!app.isPackaged) {
+  const devCacheDir = path.join(app.getPath('temp'), 'envswitch-dev-cache');
+  try {
+    fs.mkdirSync(devCacheDir, { recursive: true });
+    app.setPath('userData', devCacheDir); // 缓存随之落到临时目录，GPU 缓存也一并解决
+  } catch (e) {
+    console.warn('[dev] 无法重定向开发缓存目录，忽略:', e.message);
+  }
+}
+
 let mainWindow;
 let server;
 let io;
 const watchers = new Map();
 
-// 获取应用数据目录
+// 自动更新相关状态（与 easy-ops 一致：仅用户手动触发检查，不在启动时自动检查）
+let updaterInitialized = false; // 防止 ipcMain.handle 重复注册（mac 重新激活窗口时会再次进入）
+let isChecking = false;        // 防重入：正在检查更新
+let isDownloading = false;     // 防重入：正在下载更新
+
+// 获取应用数据目录（固定返回真实的 userData，不受上方开发模式重定向影响）
 const getAppDataPath = () => {
-  return app.getPath('userData');
+  return REAL_USER_DATA;
 };
 
 // 确保数据目录存在
@@ -446,68 +468,15 @@ async function startServer() {
     }
   });
 
-  // port.txt 方案：动态分配端口
-  const PORT_FILE = path.join(__dirname, 'public', 'port.txt');
-  const START_PORT = 3001;
-
-  function isPortFree(port) {
-    return new Promise((resolve) => {
-      const tester = require('net').createServer();
-      tester.once('error', (err) => {
-        if (err.code === 'EADDRINUSE') resolve(false);
-        else resolve(false);
-      });
-      tester.once('listening', () => {
-        tester.close();
-        resolve(true);
-      });
-      tester.listen(port, '127.0.0.1');
-    });
-  }
-
-  async function findAvailablePort() {
-    // 优先读取 port.txt 中的端口
-    let savedPort = null;
-    try {
-      if (fs.existsSync(PORT_FILE)) {
-        savedPort = parseInt(fs.readFileSync(PORT_FILE, 'utf8').trim(), 10);
-      }
-    } catch (e) { /* ignore */ }
-
-    if (savedPort && savedPort >= 1024 && savedPort <= 65535) {
-      if (await isPortFree(savedPort)) {
-        console.log(`[PORT] 使用保存的端口: ${savedPort}`);
-        return savedPort;
-      }
-      console.log(`[PORT] 保存的端口 ${savedPort} 已被占用，重新分配`);
-    }
-
-    // 从 3001 开始找一个可用端口
-    let port = START_PORT;
-    while (port < 3200) {
-      if (await isPortFree(port)) {
-        console.log(`[PORT] 找到可用端口: ${port}`);
-        return port;
-      }
-      port++;
-    }
-    return START_PORT;
-  }
-
-  const chosenPort = await findAvailablePort();
-
+  // 系统分配端口方案（参考 easy-ops）：监听 0 号端口，由操作系统分配一个
+  // 全局唯一的空闲端口，彻底避免与其它应用或自身多实例争抢固定端口导致的「串台」。
   return new Promise((resolve, reject) => {
-    server.listen(chosenPort, '127.0.0.1', () => {
-      // 写入 port.txt
-      try {
-        const portDir = path.dirname(PORT_FILE);
-        if (!fs.existsSync(portDir)) fs.mkdirSync(portDir, { recursive: true });
-        fs.writeFileSync(PORT_FILE, String(chosenPort));
-        console.log(`Server running on http://127.0.0.1:${chosenPort}`);
-      } catch (e) {
-        console.log(`[PORT] 写入 port.txt 失败:`, e.message);
-      }
-      resolve(chosenPort);
+    server.listen(0, '127.0.0.1', () => {
+      // listen(0) 之后从 server.address() 取回操作系统实际分配的端口
+      const addr = server.address();
+      const port = addr ? addr.port : 0;
+      console.log(`Server running on http://127.0.0.1:${port} (系统分配端口)`);
+      resolve(port);
     }).on('error', (err) => {
       reject(err);
     });
@@ -523,9 +492,11 @@ async function createWindow() {
     minHeight: 600,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // 预加载脚本：向渲染进程暴露 window.electronAPI（更新等能力），隔离环境下唯一安全通道
+      preload: path.join(__dirname, 'preload.js')
     },
-    icon: path.join(__dirname, 'public', 'icon.ico')
+    icon: path.join(__dirname, 'public', 'logo-win.png')
   });
 
   // 隐藏菜单栏
@@ -543,16 +514,165 @@ async function createWindow() {
   }
 }
 
-// 当 Electron 准备好时创建窗口
-app.whenReady().then(() => {
-  createWindow();
+// ---------------------------------------------------------------------------
+// 自动更新（参考 easy-ops）
+// Windows：electron-updater + GitHub Releases 作为更新源（NSIS 安装包，个人发布无需签名）
+// 关键约束：更新检查完全由用户点击「检查更新」触发，不在应用启动时自动检查
+// ---------------------------------------------------------------------------
+function initAutoUpdater() {
+  if (updaterInitialized) return; // 仅注册一次（mac 重新激活窗口会再次进入 createWindow）
+  updaterInitialized = true;
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+  // 无论是否打包，先注册 app:get-info，供前端展示当前版本号
+  ipcMain.handle('app:get-info', () => ({ version: app.getVersion() }));
+
+  // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
+  if (!app.isPackaged) {
+    console.log('[UPDATE] 开发模式：跳过真实更新检查（打包后才会真正连 GitHub）');
+    ipcMain.handle('app:check-updates', async () => {
+      if (mainWindow) {
+        mainWindow.webContents.send('update-event', {
+          type: 'error',
+          message: 'Running in dev mode. Auto-update only works in packaged builds.'
+        });
+      }
+    });
+    ipcMain.handle('app:download-update', () => {});
+    ipcMain.handle('app:start-update', () => {});
+    return;
+  }
+
+  // 打包环境：防御性加载 electron-updater，避免未正确打包时报错崩溃
+  let autoUpdater;
+  try {
+    autoUpdater = require('electron-updater').autoUpdater;
+  } catch (e) {
+    console.error('[UPDATE] electron-updater 不可用:', e.message);
+    ipcMain.handle('app:check-updates', async () => {
+      if (mainWindow) mainWindow.webContents.send('update-event', { type: 'error', message: 'Updater not available.' });
+    });
+    ipcMain.handle('app:download-update', () => {});
+    ipcMain.handle('app:start-update', () => {});
+    return;
+  }
+
+  // 不在后台自动下载，等用户点「下载并更新」再下载；退出时自动安装已下载的更新
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  // 更新源：GitHub Releases（仓库 bynow2code/env-switch）
+  // 前置条件：把 electron-builder 产出的 .exe 与 latest.yml 上传到对应版本（v<version>）的 GitHub Release
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'bynow2code',
+    repo: 'env-switch'
+  });
+
+  // 统一的事件转发：主进程 autoUpdater 事件 -> 渲染进程（update-event 通道）
+  const send = (payload) => {
+    if (mainWindow) mainWindow.webContents.send('update-event', payload);
+  };
+
+  autoUpdater.on('checking-for-update', () => send({ type: 'checking' }));
+  autoUpdater.on('update-available', (info) => send({
+    type: 'available',
+    version: info.version,
+    releaseNotes: info.releaseNotes || ''
+  }));
+  autoUpdater.on('update-not-available', (info) => send({
+    type: 'not-available',
+    version: info.version
+  }));
+  autoUpdater.on('download-progress', (p) => send({
+    type: 'downloading',
+    progress: Math.round(p.percent || 0)
+  }));
+  autoUpdater.on('update-downloaded', (info) => send({
+    type: 'downloaded',
+    version: info.version
+  }));
+  autoUpdater.on('error', (err) => send({
+    type: 'error',
+    message: (err && err.message) || String(err)
+  }));
+
+  // IPC：检查更新（带防重入）
+  ipcMain.handle('app:check-updates', async () => {
+    if (isChecking) {
+      console.log('[UPDATE] checkForUpdates 忽略 - 正在检查中');
+      return;
+    }
+    isChecking = true;
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (e) {
+      console.error('[UPDATE] checkForUpdates 失败:', e.message);
+      send({ type: 'error', message: e.message });
+    } finally {
+      isChecking = false;
     }
   });
-});
+
+  // IPC：下载更新（带防重入）
+  ipcMain.handle('app:download-update', async () => {
+    if (isDownloading) {
+      console.log('[UPDATE] downloadUpdate 忽略 - 正在下载中');
+      return;
+    }
+    isDownloading = true;
+    try {
+      await autoUpdater.downloadUpdate();
+    } catch (e) {
+      console.error('[UPDATE] downloadUpdate 失败:', e.message);
+      send({ type: 'error', message: e.message });
+    } finally {
+      isDownloading = false;
+    }
+  });
+
+  // IPC：退出并安装更新
+  ipcMain.handle('app:start-update', () => {
+    try {
+      // quitAndInstall(isSilent, isForceRunAfter) -> 先退出再强制安装并重启
+      autoUpdater.quitAndInstall(false, true);
+    } catch (e) {
+      console.error('[UPDATE] quitAndInstall 失败:', e.message);
+      send({ type: 'error', message: e.message });
+    }
+  });
+}
+
+// 单实例锁（参考 easy-ops「防止串台」）：保证同一时间只有一个 EnvSwitch 在运行，
+// 第二个启动实例会聚焦已有窗口，而不是再起一个后端/窗口与之争抢资源。
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // 没拿到锁说明已有实例在运行，当前（第二个）实例直接退出
+  app.quit();
+} else {
+  // 第二个实例尝试启动时：只聚焦已有窗口，不重复创建
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  // 当 Electron 准备好时创建窗口
+  app.whenReady().then(() => {
+    createWindow();
+
+    // 窗口建好后再初始化自动更新（事件转发依赖 mainWindow）
+    initAutoUpdater();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
 
 // 当所有窗口关闭时退出应用
 app.on('window-all-closed', () => {

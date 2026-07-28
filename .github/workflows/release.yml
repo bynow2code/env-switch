@@ -1,0 +1,144 @@
+name: EnvSwitch Auto Release
+
+# 触发方式（参考 easy-ops 的 GitHub Flow 发布流）：
+#   ① workflow_dispatch：在 GitHub Actions 页面手动触发，方便补发包 / 重新出包
+#   ② push tags：推送形如 v1.2.3 的 tag 时自动触发完整发布流程
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v*
+
+jobs:
+  # ===================== 创建 Release（轻量级，先跑完） =====================
+  # 把「创建 Release」与「构建安装包」拆成两个环节：
+  #   ① 先用轻量 Linux runner 快速建好一个空 Release（含自动生成的 release notes）
+  #   ② 再让 Windows / macOS 各 runner 并行构建，并分别把产物上传到同一个 Release
+  # 这样做避免了串行等待，整体耗时约省一半。
+  create-release:
+    name: 创建 Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          # 这一步只建 Release 本体，不上传任何产物；产物由各平台构建作业随后上传
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===================== Windows 发布作业 =====================
+  release-windows:
+    name: 构建并发布 Windows ${{ github.ref_name }}
+    runs-on: windows-latest
+    needs: create-release
+    permissions:
+      contents: write
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 同步版本号与 tag
+        # 把根 package.json 的 version 同步成当前 tag（去掉 v 前缀），
+        # 这样 electron-builder 产出的安装包与 latest.yml 版本号都与 tag 一致，
+        # 后续 electron-updater 才能正确比对版本。
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          npm version $ver --no-git-tag-version --allow-same-version
+
+      - name: 安装根目录依赖
+        # EnvSwitch 的 server 运行在主进程内（express 等均为根依赖），
+        # 因此无需像 easy-ops 那样再单独 npm ci 一个 server 子项目。
+        run: npm ci
+
+      - name: 安装前端依赖
+        working-directory: client
+        run: npm ci
+
+      - name: 构建并打包 Windows 安装包
+        # npm run electron-build = npm run build && electron-builder --win --x64
+        # GH_TOKEN 用于 action-gh-release 上传产物，以及 electron-updater 后续读取 GitHub Release。
+        run: npm run electron-build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传 Windows 产物到 Release
+        uses: softprops/action-gh-release@v3
+        if: success()
+        with:
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          # EnvSwitch 的 Windows 仅打 nsis 安装包（无 zip 目标），产物落在 release/ 目录
+          files: |
+            release/*.exe
+            release/latest.yml
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===================== macOS 发布作业 =====================
+  release-macos:
+    name: 构建并发布 macOS ${{ github.ref_name }}
+    runs-on: macos-26
+    needs: create-release
+    permissions:
+      contents: write
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 同步版本号与 tag
+        run: |
+          ver="${{ github.ref_name }}"
+          ver="${ver#v}"
+          npm version "$ver" --no-git-tag-version --allow-same-version
+
+      - name: 安装根目录依赖
+        run: npm ci
+
+      - name: 安装前端依赖
+        working-directory: client
+        run: npm ci
+
+      - name: 构建并打包 macOS 安装包
+        # npm run electron-build-mac = npm run build && electron-builder --mac --x64 --arm64
+        run: npm run electron-build-mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 个人发布、不签名：显式关闭 CI 自动发现签名身份，
+          # 避免无证书时 electron-builder 尝试签名而行为漂移；未签名 dmg 对本项目使用场景可接受。
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: 上传 macOS 产物到 Release
+        uses: softprops/action-gh-release@v3
+        if: success()
+        with:
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          # macOS 打 dmg + zip（见 build.mac.target），产物落在 release/ 目录
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

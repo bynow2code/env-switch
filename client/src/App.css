@@ -56,6 +56,97 @@ body {
   background: #4338ca;
 }
 
+/* Update button (header) */
+.btn-update {
+  padding: 8px 16px;
+  background: #fff;
+  color: #4f46e5;
+  border: 1.5px solid #4f46e5;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-update:hover {
+  background: #4f46e5;
+  color: #fff;
+}
+
+/* 有可用更新时的小红点提示 */
+.update-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Update modal */
+.update-dialog {
+  width: 440px;
+}
+
+.update-body {
+  min-height: 60px;
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.update-body strong {
+  color: #1a1a2e;
+}
+
+.update-hint {
+  margin-top: 8px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.update-notes {
+  max-height: 180px;
+  overflow: auto;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.update-error-text {
+  color: #ef4444;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 10px;
+  background: #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: #4f46e5;
+  border-radius: 6px;
+  transition: width 0.2s ease;
+}
+
 /* Loading */
 .loading {
   display: flex;

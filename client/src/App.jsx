@@ -119,6 +119,15 @@ function App() {
   const [switching, setSwitching] = useState({})
   const [socket, setSocket] = useState(null)
 
+  // 自动更新相关状态
+  const [appVersion, setAppVersion] = useState('')          // 当前版本号
+  const [showUpdateModal, setShowUpdateModal] = useState(false)
+  // updateState: idle | checking | available | not-available | downloading | downloaded | error
+  const [updateState, setUpdateState] = useState('idle')
+  const [updateInfo, setUpdateInfo] = useState({ version: '', releaseNotes: '' })
+  const [updateProgress, setUpdateProgress] = useState(0)
+  const [updateError, setUpdateError] = useState('')
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
@@ -157,6 +166,91 @@ function App() {
 
     return () => s.disconnect()
   }, [])
+
+  // 自动更新：订阅主进程推送的更新事件 + 获取当前版本号
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api) return
+
+    // 获取当前版本（用于弹窗里显示「已是最新版本 vX.Y.Z」）
+    if (api.getAppInfo) {
+      api.getAppInfo()
+        .then(info => { if (info && info.version) setAppVersion(info.version) })
+        .catch(() => {})
+    }
+
+    // 订阅 update-event：按类型驱动弹窗状态机
+    let unsub = () => {}
+    if (api.onUpdateEvent) {
+      unsub = api.onUpdateEvent((data) => {
+        switch (data.type) {
+          case 'checking':
+            setUpdateState('checking')
+            setUpdateError('')
+            break
+          case 'available':
+            setUpdateState('available')
+            setUpdateInfo({ version: data.version, releaseNotes: data.releaseNotes || '' })
+            break
+          case 'not-available':
+            setUpdateState('not-available')
+            break
+          case 'downloading':
+            setUpdateState('downloading')
+            setUpdateProgress(Math.min(data.progress || 0, 99))
+            break
+          case 'downloaded':
+            setUpdateState('downloaded')
+            setUpdateProgress(100)
+            if (data.version) setUpdateInfo(prev => ({ ...prev, version: data.version }))
+            break
+          case 'error':
+            setUpdateState('error')
+            setUpdateError(data.message || '未知错误')
+            break
+          default:
+            break
+        }
+      })
+    }
+
+    return () => { if (unsub) unsub() }
+  }, [])
+
+  // 点击「检查更新」：打开弹窗并触发检查
+  const handleCheckUpdates = () => {
+    setShowUpdateModal(true)
+    setUpdateError('')
+    if (updateState !== 'downloaded') setUpdateState('checking')
+    const api = window.electronAPI
+    if (api && api.checkForUpdates) {
+      api.checkForUpdates().catch(() => {
+        setUpdateState('error')
+        setUpdateError('Running in dev mode. Auto-update only works in packaged builds.')
+      })
+    }
+  }
+
+  // 点击「下载并更新」：开始下载
+  const handleDownloadUpdate = () => {
+    if (updateState === 'downloading') return // 防重复点击
+    setUpdateProgress(0)
+    setUpdateState('downloading')
+    const api = window.electronAPI
+    if (api && api.downloadUpdate) api.downloadUpdate()
+  }
+
+  // 点击「重启并更新」：退出并安装
+  const handleStartUpdate = () => {
+    const api = window.electronAPI
+    if (api && api.startUpdate) {
+      api.startUpdate().catch((err) => {
+        console.error('startUpdate failed:', err)
+        setUpdateError('重启失败，请手动关闭并重新打开应用。')
+        setUpdateState('error')
+      })
+    }
+  }
 
   const addProject = async () => {
     setError('')
@@ -251,6 +345,10 @@ function App() {
       <header className="app-header">
         <h1>EnvSwitch</h1>
         <span className="subtitle">ENV 配置管理工具</span>
+        <button className="btn-update" onClick={handleCheckUpdates} title="检查更新">
+          {updateState === 'downloaded' ? '更新可用' : '检查更新'}
+        </button>
+        {updateState === 'downloaded' && <span className="update-badge">!</span>}
         <button className="btn-add" onClick={() => setShowAddDialog(true)}>
           + 添加项目
         </button>
@@ -308,6 +406,63 @@ function App() {
           </DndContext>
         )}
       </div>
+
+      {showUpdateModal && (
+        <div className="dialog-overlay" onClick={() => setShowUpdateModal(false)}>
+          <div className="dialog update-dialog" onClick={e => e.stopPropagation()}>
+            <h2>检查更新</h2>
+            <div className="update-body">
+              {updateState === 'idle' && <p>点击下方按钮检查最新版本。</p>}
+              {updateState === 'checking' && <p>正在检查更新…</p>}
+              {updateState === 'not-available' && <p>已是最新版本 (v{appVersion})。</p>}
+              {updateState === 'available' && (
+                <div>
+                  <p>发现新版本 <strong>v{updateInfo.version}</strong>。</p>
+                  {updateInfo.releaseNotes && (
+                    <pre className="update-notes">{typeof updateInfo.releaseNotes === 'string' ? updateInfo.releaseNotes : JSON.stringify(updateInfo.releaseNotes)}</pre>
+                  )}
+                  <p className="update-hint">是否下载并安装此更新？</p>
+                </div>
+              )}
+              {updateState === 'downloading' && (
+                <div>
+                  <p>正在下载更新: {updateProgress}%</p>
+                  <div className="update-progress-bar">
+                    <div className="update-progress-fill" style={{ width: `${updateProgress}%` }} />
+                  </div>
+                </div>
+              )}
+              {updateState === 'downloaded' && (
+                <div>
+                  <p>更新已下载 (v{updateInfo.version})。</p>
+                  <p className="update-hint">重启应用以应用更新。</p>
+                </div>
+              )}
+              {updateState === 'error' && (
+                <div>
+                  <p className="update-error-text">更新检查失败:</p>
+                  <pre className="update-notes">{updateError}</pre>
+                </div>
+              )}
+            </div>
+            <div className="dialog-actions">
+              {updateState === 'downloaded' ? (
+                <>
+                  <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>稍后</button>
+                  <button className="btn-confirm" onClick={handleStartUpdate}>重启并更新</button>
+                </>
+              ) : updateState === 'available' ? (
+                <>
+                  <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>稍后</button>
+                  <button className="btn-confirm" onClick={handleDownloadUpdate}>下载并更新</button>
+                </>
+              ) : (
+                <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>关闭</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

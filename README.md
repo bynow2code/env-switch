@@ -1,106 +1,127 @@
 # EnvSwitch
 
-ENV 配置管理工具 — 可视化管理和切换多个项目的 `.env` 环境配置。
+> 一个帮你**集中管理、随手切换多个项目 `.env` 环境配置**的桌面小工具。把零散在各项目目录里的 `.env.xxx` 收进一个窗口，点一下就把对应配置覆盖到 `.env`，不用再手动翻文件、复制粘贴还容易敲错。
 
-## 功能特性
+---
 
-- **多项目管理** — 支持添加多个项目目录，集中管理所有项目的环境配置
-- **一键切换环境** — 列出项目目录下的 `.env.xxx` 文件，点击即可将对应配置覆盖到 `.env`
-- **实时监控** — 使用 chokidar 监控 `.env` 文件变化，通过 Socket.IO 实时推送更新到界面
-- **拖拽排序** — 支持拖拽调整项目卡片顺序，排序结果自动持久化
-- **WSL 支持** — 兼容 Windows Subsystem for Linux 路径（如 `\\wsl.localhost\Ubuntu\...`）
-- **Electron 桌面应用** — 可打包为 Windows 安装程序（NSIS），独立运行
+## 这是什么，解决什么问题
+
+日常开发中，我们手里的项目越来越多，每个项目目录下都有一堆 `.env` / `.env.development` / `.env.production` / `.env.staging`……
+
+- 记不住哪个文件对应哪个环境，改之前还要先备份原 `.env`；
+- 复制粘贴切换配置，稍不注意就漏改、改错，甚至把生产配置贴到本地；
+- 多项目之间来回切，终端里 `cp` 来 `cp` 去，效率低还容易串。
+
+EnvSwitch 把这些 `.env` 集中管起来：
+
+- **不用翻目录、不用手敲命令**：所有环境文件都在一个窗口里，点一下就把 `.env.xxx` 覆盖到 `.env`，实时生效。
+- **不怕改错**：界面列出项目的全部 `.env.xxx`，切换前一目了然；原 `.env` 内容会被覆盖，重要配置建议先备份。
+- **实时可见**：用 chokidar 监控 `.env` 变化，配合 Socket.IO 实时推送到界面，文件被外部改了也能立刻看到。
+- **多项目集中管理**：多个项目目录一起管理，卡片拖拽排序，顺序自动持久化。
+
+简单说，它是一个**给 `.env` 用的「切换器 + 管理器」**，让重复性的环境切换变成点点鼠标的事。
+
+## 核心功能
+
+| 功能 | 说明 |
+|------|------|
+| 📁 **多项目管理** | 添加多个项目目录，集中管理所有项目的环境配置 |
+| ⚡ **一键切换环境** | 列出项目下的 `.env.xxx` 文件，点击即将对应配置覆盖到 `.env` |
+| 👀 **实时监控** | 基于 chokidar + Socket.IO，`.env` 变化实时推送到界面 |
+| ↔️ **拖拽排序** | 支持拖拽调整项目卡片顺序，排序结果自动持久化 |
+| 🐧 **WSL 支持** | 兼容 Windows Subsystem for Linux 路径（`\\wsl.localhost\Ubuntu\...`） |
+| 🖥️ **桌面应用** | Electron 打包，Windows / macOS 独立运行，无需常开终端 |
+| 🔄 **自动更新** | 打包版本可检查 GitHub Release 上的新版本，更新日志按 Release 风格展示 |
+| 🔒 **系统分配端口** | 后端监听 `0` 号端口由系统分配，配合单实例锁，避免多实例串台 |
+
+## 怎么用
+
+### 1. 安装
+
+- **使用发布版**：到 GitHub Releases 下载安装包。
+  - **Windows**：下载 `.exe`（NSIS 安装包）双击安装。
+  - **macOS**：下载 `.dmg`（同时提供 Intel 与 Apple Silicon 版本）。
+- **从源码构建（开发者）**：环境要求 Node.js >= 18、npm >= 9。
+  ```bash
+  npm install
+  cd client && npm install
+  npm run electron-build        # 构建 Windows 安装包
+  # 或（需在 macOS 环境下）
+  npm run electron-build-mac    # 构建 macOS dmg + zip
+  ```
+- **本地开发调试**：同时启动服务端和前端开发服务器。
+  ```bash
+  npm run dev
+  ```
+  服务端运行在 `http://localhost:3001`，前端（Vite）在 `http://localhost:5173`。
+  也可以构建前端后直接以 Electron 窗口运行：`npm run electron-dev`。
+
+### 2. 添加项目
+
+1. 点击右上角 **"+ 添加项目"** 按钮
+2. 输入项目的根目录路径（需包含 `.env` 文件），支持本地路径和 WSL 路径
+3. 点击确定
+
+### 3. 切换环境
+
+1. 项目卡片会显示当前 `.env` 中的 `APP_NAME` 和 `APP_ENV`
+2. 在"环境配置切换"区域，点击对应 `.env.xxx` 文件旁的 **"切换"** 按钮
+3. 该配置文件的内容将被复制到 `.env`，界面实时更新
+
+### 4. 排序与删除
+
+- **拖拽排序**：按住拖拽手柄（⠿）拖动项目卡片调整顺序
+- **删除项目**：点击卡片右上角的"删除"按钮移除项目
+
+### 5. 检查更新
+
+- 窗口头部「检查更新」按钮可手动触发版本检查，发现新版本会弹窗提示下载安装。
+- 仅**打包版本**会真正连接 GitHub Releases；开发模式（未打包）下检查会提示 "Running in dev mode"，不会联网。
+
+## 支持平台
+
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| Windows 10/11 | ✅ | NSIS 安装包（`.exe`） |
+| macOS（Intel） | ✅ | `.dmg` / `.zip` |
+| macOS（Apple Silicon） | ✅ | `.dmg` / `.zip` |
+| Linux | 🔧 | 未提供对应包体 |
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
 | 桌面框架 | Electron |
-| 后端 | Express + Socket.IO |
+| 后端 | Express + Socket.IO（运行于主进程内） |
 | 前端 | React + Vite |
 | 拖拽 | @dnd-kit |
 | 文件监控 | chokidar |
-| 打包 | electron-builder (NSIS) |
+| 打包 | electron-builder (NSIS / dmg) |
+| 自动更新 | electron-updater (GitHub Releases) |
 
 ## 项目结构
 
 ```
 EnvSwitch/
-├── electron-main.js      # Electron 主进程
+├── electron-main.js      # Electron 主进程（Express 服务端 + 自动更新 + 单实例锁 + 系统分配端口）
+├── preload.js            # 预加载脚本（向渲染进程安全暴露 electronAPI）
 ├── server/
-│   └── index.js          # Express 服务端（API + 静态文件 + Socket.IO）
+│   └── index.js          # Express 服务端（独立运行时的入口；打包后由主进程内联）
 ├── client/               # React 前端
 │   ├── src/
-│   │   ├── App.jsx       # 主组件
+│   │   ├── App.jsx       # 主组件（含更新 UI 状态机）
 │   │   ├── App.css       # 样式
 │   │   └── main.jsx      # 入口
 │   └── public/
 │       ├── favicon.svg
-│       ├── icon.png
-│       └── icon.ico
-├── gen-icons.js          # 图标生成脚本
+│       ├── logo-1024.png   # 默认图标（build.icon）
+│       ├── logo-win.png    # Windows 图标（build.win.icon + 运行时窗口图标）
+│       └── logo-mac.png    # macOS 图标（build.mac.icon）
+├── gen-icons.js          # 图标生成脚本（从 favicon.svg 渲染 3 张 PNG）
 └── package.json
 ```
 
-## 快速开始
-
-### 环境要求
-
-- Node.js >= 18
-- npm >= 9
-
-### 安装依赖
-
-```bash
-npm install
-cd client && npm install
-```
-
-### 开发模式
-
-同时启动 Express 服务端和 React 前端开发服务器：
-
-```bash
-npm run dev
-```
-
-- 服务端：`http://localhost:3001`
-- 前端（Vite）：`http://localhost:5173`
-
-### Electron 开发模式
-
-构建前端后在 Electron 窗口中运行：
-
-```bash
-npm run electron-dev
-```
-
-### 打包为 Windows 应用
-
-```bash
-npm run electron-build
-```
-
-打包产物输出到 `release/` 目录，生成 NSIS 安装程序。
-
-## 使用说明
-
-### 添加项目
-
-1. 点击右上角 **"+ 添加项目"** 按钮
-2. 输入项目的根目录路径（需包含 `.env` 文件），支持本地路径和 WSL 路径
-3. 点击确定
-
-### 切换环境
-
-1. 项目卡片会显示当前 `.env` 中的 `APP_NAME` 和 `APP_ENV`
-2. 在"环境配置切换"区域，点击对应 `.env.xxx` 文件旁的 **"切换"** 按钮
-3. 该配置文件的内容将被复制到 `.env`，界面实时更新
-
-### 排序与删除
-
-- **拖拽排序**：按住拖拽手柄（⠿）拖动项目卡片调整顺序
-- **删除项目**：点击卡片右上角的"删除"按钮移除项目
+> 注意：`public/` 是 Vite 构建输出目录（被 `.gitignore` 忽略），由 `npm run build` 从 `client/public` 拷贝生成，无需手动维护。
 
 ## API 接口
 
@@ -114,6 +135,21 @@ npm run electron-build
 | POST | `/api/projects/:id/switch` | 切换环境（body: `{ envFileName }`） |
 | GET | `/api/projects/:id/env-file/:fileName` | 获取指定 env 文件内容 |
 
-## 数据存储
+## 常见问题
 
-项目数据存储在 `server/data.json`（开发模式）或 Electron 用户数据目录（打包模式）。Electron 模式下路径为 `app.getPath('userData')/data/data.json`。
+**Q：数据存在哪？**
+- 独立运行服务端（`npm run server` / `npm run dev`）：数据在 `server/data.json`。
+- 桌面应用（打包或 `npm run electron-dev`）：数据在 Electron 用户数据目录 `app.getPath('userData')/data/data.json`。
+- 卸载或重装桌面应用前，请按需备份该目录。
+
+**Q：切换环境会破坏原 `.env` 吗？**
+会。切换是把选中 `.env.xxx` 的内容**覆盖写入** `.env`，原 `.env` 内容会被替换。重要配置请在切换前自行备份，或先复制一份 `.env.backup`。
+
+**Q：明明改了 `.env`，界面没更新？**
+界面通过 chokidar 实时监控 `.env` 变化并推送；若项目路径是 WSL 路径，监控会被跳过（WSL 不支持 chokidar 监听），此时需手动刷新界面。
+
+**Q：自动更新提示 dev mode / 连不上？**
+自动更新只在**打包版本**生效，更新源为 GitHub Releases（仓库 `bynow2code/env-switch`）。开发模式仅显示提示，不会联网；若仓库为私有，需在更新源配置中提供 token。
+
+**Q：端口被占用 / 打开多个窗口串台？**
+桌面应用（打包 / `electron-dev`）的后端监听 `0` 号端口，由操作系统分配唯一空闲端口，且应用启用单实例锁：第二个启动的实例会聚焦已有窗口，不会另起后端，从根本上避免端口争抢与串台。

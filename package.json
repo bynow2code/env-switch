@@ -11,24 +11,26 @@
     "electron-dev": "npm run build && electron .",
     "electron-build": "npm run build && electron-builder --win --x64",
     "electron-build-dir": "npm run build && electron-builder --dir --win",
+    "electron-build-mac": "npm run build && electron-builder --mac --x64 --arm64",
     "start": "electron ."
   },
   "dependencies": {
     "chokidar": "^3.6.0",
     "cors": "^2.8.5",
+    "electron-updater": "^6.8.9",
     "express": "^4.19.2",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "electron": "^34.0.0",
+    "electron": "^43.2.0",
     "electron-builder": "^26.0.0",
-    "png-to-ico": "^3.0.1",
     "sharp": "^0.35.0"
   },
   "build": {
     "appId": "com.envswitch.app",
     "productName": "EnvSwitch",
+    "icon": "client/public/logo-1024.png",
     "directories": {
       "output": "release"
     },
@@ -46,7 +48,15 @@
           ]
         }
       ],
-      "icon": "client/public/icon.ico"
+      "icon": "client/public/logo-win.png"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "client/public/logo-mac.png",
+      "category": "public.app-category.developer-tools"
     },
     "nsis": {
       "oneClick": false,
