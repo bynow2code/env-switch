@@ -13,15 +13,11 @@ const { execSync } = require('child_process');
 // 放在最顶部，确保日志工具定义时即可引用（日志目录在开发模式重定向之前就已锁定）。
 const REAL_USER_DATA = app.getPath('userData');
 
-// 日志策略：默认静默，仅保留「出错」日志，减少运行噪声。
-//   · 信息类日志：一律不再输出（已整体移除，仅保留错误日志链路）
-//   · 错误日志(console.error / console.warn / logErr)：按运行模式分流
-//       - 开发模式(dev，未打包)：直接输出到终端，方便实时调试
-//       - 打包模式(prod)：写入程序日志文件 userData/logs/main.log（终端不可见）
+// 日志策略（对齐 easy-ops）：log() 同时输出到控制台（[Main] 前缀、无时间戳）
+// 与程序日志文件（userData/logs/main.log、带 ISO 时间戳）。开发模式与打包模式行为一致，
+// 不做静默——只要调用 log()，控制台和文件都会记录，便于排查问题。
 // 注：日志目录用真实 userData 固定（开发模式会把 userData 重定向到临时缓存目录，
-// 但日志需落在原始 userData 下），故此处不能现取 app.getPath('userData')。
-
-const IS_DEV = !app.isPackaged
+// 但日志需落在原始 userData 下），故写入 REAL_USER_DATA/logs/main.log。
 
 // 安全格式化：字符串原样，Error 取 stack，对象转 JSON（循环引用降级为 String）
 const fmtLog = (args) => args.map(a => {
@@ -30,39 +26,21 @@ const fmtLog = (args) => args.map(a => {
   try { return JSON.stringify(a) } catch (e) { return String(a) }
 }).join(' ')
 
-// 日志目录：在开发模式「重定向 userData 到临时缓存目录」之前用真实 userData 固定下来
-const LOG_DIR = path.join(REAL_USER_DATA, 'logs')
-
-// 追加一行到 LOG_DIR/main.log（打包模式下错误日志的落盘位置）
-function appendLog(line) {
+// 主日志函数（对齐 easy-ops，使用 function 声明以获得 hoisting，确保早期异常回调也能安全调用）：
+// 控制台打印 `[Main] <message>`，同时追加 `[<ISO时间戳>] <message>` 到 userData/logs/main.log
+function log(message) {
+  console.log(`[Main] ${message}`)
   try {
-    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true })
-    fs.appendFileSync(path.join(LOG_DIR, 'main.log'), `[${new Date().toISOString()}] ${line}\n`)
+    const logDir = path.join(REAL_USER_DATA, 'logs')
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true })
+    fs.appendFileSync(path.join(logDir, 'main.log'), `[${new Date().toISOString()}] ${message}\n`)
   } catch (e) { /* 日志写入失败不阻塞主流程 */ }
 }
 
-// 保留原始方法，避免递归调用
-const _origConsoleErr = console.error.bind(console)
-const _origConsoleWarn = console.warn.bind(console)
+// 错误日志便捷方法：带模块前缀（如 [FATAL]/[SERVER]），最终同样走 log() 的双写通道
+function logErr(tag, ...args) { log(`[${tag}] ${fmtLog(args)}`) }
 
-// 错误日志：dev 输出终端，prod 写入日志文件
-console.error = (...args) => {
-  const msg = fmtLog(args)
-  if (IS_DEV) _origConsoleErr(...args)
-  else appendLog('[ERROR] ' + msg)
-}
-console.warn = (...args) => {
-  const msg = fmtLog(args)
-  if (IS_DEV) _origConsoleWarn(...args)
-  else appendLog('[WARN] ' + msg)
-}
-// 彻底屏蔽所有 info 级输出（含第三方依赖的 console.log），仅错误日志链路生效
-console.log = () => {}
-
-// 错误日志便捷方法：带模块前缀，最终走上方 console.error 的 dev/prod 分流
-function logErr(tag, ...args) { console.error(`[${tag}]`, ...args) }
-
-// 未捕获异常也走错误日志（dev 终端 / prod 文件）
+// 未捕获异常 / 未处理拒绝：写入日志（开发/打包均可见），避免静默崩溃
 process.on('uncaughtException', (err) => {
   logErr('FATAL', 'uncaughtException:', err && err.stack || err)
 })
@@ -78,6 +56,7 @@ if (!app.isPackaged) {
   try {
     fs.mkdirSync(devCacheDir, { recursive: true });
     app.setPath('userData', devCacheDir); // 缓存随之落到临时目录，GPU 缓存也一并解决
+    log(`[MAIN] 开发模式：重定向 Chromium 缓存到 ${devCacheDir}`);
   } catch (e) {
     logErr('MAIN', '无法重定向开发缓存目录，忽略:', e.message);
   }
@@ -112,7 +91,7 @@ function loadData() {
       return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
     }
   } catch (e) {
-    console.error('加载数据失败:', e.message);
+    log(`[SERVER] 加载数据失败: ${e.message}`);
   }
   return { projects: [] };
 }
@@ -121,7 +100,7 @@ function saveData(data) {
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.error('保存数据失败:', e.message);
+    log(`[SERVER] 保存数据失败: ${e.message}`);
   }
 }
 
@@ -142,6 +121,7 @@ function wslCopyFile(sourcePath, targetPath) {
     throw new Error('无法解析 WSL 路径');
   }
   const cmd = `wsl.exe -d ${source.distro} cp "${source.linuxPath}" "${target.linuxPath}"`;
+  log(`[WSL] copy ${sourcePath} -> ${targetPath}`);
   execSync(cmd, { stdio: 'pipe', timeout: 5000 });
 }
 
@@ -150,6 +130,7 @@ function wslReadFile(filePath) {
   const parsed = parseWslPath(filePath);
   if (!parsed) throw new Error('无法解析 WSL 路径');
   const cmd = `wsl.exe -d ${parsed.distro} cat "${parsed.linuxPath}"`;
+  log(`[WSL] read ${filePath}`);
   return execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
 }
 
@@ -173,6 +154,7 @@ function parseEnvFile(filePath) {
     } else {
       if (!fs.existsSync(filePath)) return result;
       content = fs.readFileSync(filePath, 'utf-8');
+      log(`[FILE] 解析 ${filePath}`);
     }
     const lines = content.split('\n');
     for (const line of lines) {
@@ -190,7 +172,7 @@ function parseEnvFile(filePath) {
       result[key] = value;
     }
   } catch (e) {
-    console.error(`Error parsing ${filePath}:`, e.message);
+    log(`[FILE] Error parsing ${filePath}: ${e.message}`);
   }
   return result;
 }
@@ -199,6 +181,7 @@ function parseEnvFile(filePath) {
 function getProjectInfo(projectDir) {
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
+  log(`[PROJECT] 读取项目信息 ${projectDir}`);
 
   // 读取所有 .env.xxx 文件，排除 .env.example
   const envFiles = [];
@@ -234,7 +217,7 @@ function getProjectInfo(projectDir) {
       }
     }
   } catch (e) {
-    console.error('获取项目信息失败:', e.message);
+    log(`[PROJECT] 获取项目信息失败: ${e.message}`);
   }
 
   return {
@@ -247,6 +230,7 @@ function getProjectInfo(projectDir) {
 
 // 设置文件监控
 function setupWatcher(projectId, projectDir) {
+  log(`[WATCHER] 设置监控 projectId=${projectId} ${projectDir}`);
   // 清理旧的 watcher
   if (watchers.has(projectId)) {
     const old = watchers.get(projectId);
@@ -260,16 +244,19 @@ function setupWatcher(projectId, projectDir) {
   const envPath = path.join(projectDir, '.env');
 
   // WSL 路径不支持 chokidar 监控，跳过
+  log(`[WATCHER] WSL 路径，跳过文件监控 ${projectDir}`);
   if (isWslPath(projectDir)) {
     return;
   }
 
   // 只监控文件，如果 .env 是目录则跳过
+      log(`[WATCHER] envPath 是目录，跳过 ${envPath}`);
   try {
     if (fs.existsSync(envPath) && fs.statSync(envPath).isDirectory()) {
       return;
     }
   } catch (e) {
+    log(`[WATCHER] 无法访问 envPath，跳过 ${envPath}: ${e.message}`);
     return;
   }
 
@@ -279,6 +266,7 @@ function setupWatcher(projectId, projectDir) {
   });
 
   watcher.on('change', () => {
+    log(`[WATCHER] env 变更 (change) ${projectId}`);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
@@ -294,11 +282,13 @@ function setupWatcher(projectId, projectDir) {
   });
 
   dirWatcher.on('add', () => {
+    log(`[WATCHER] env 文件新增 (add) ${projectId}`);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
 
   dirWatcher.on('unlink', () => {
+    log(`[WATCHER] env 文件删除 (unlink) ${projectId}`);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
@@ -314,6 +304,7 @@ function setupWatcher(projectId, projectDir) {
 
 // 启动 Express 服务器
 async function startServer() {
+  log('[SERVER] 启动 Express 服务器 …');
   const expressApp = express();
   server = http.createServer(expressApp);
   io = new Server(server, { cors: { origin: '*' } });
@@ -322,6 +313,7 @@ async function startServer() {
   expressApp.use(express.json());
   // 请求日志：记录每个 API / 静态请求，方便排查前后端通信
   expressApp.use((req, res, next) => {
+    log(`[SERVER] ${req.method} ${req.url}`);
     next();
   });
 
@@ -404,6 +396,7 @@ async function startServer() {
     };
 
     data.projects.push(project);
+    log(`[SERVER] 项目已添加 ${project.id} ${normalizedDir}`);
     saveData(data);
 
     // 设置文件监控
@@ -483,6 +476,7 @@ async function startServer() {
 
       const info = getProjectInfo(project.dir);
       io.emit('env-changed', { projectId: project.id, ...info });
+      log(`[SERVER] 环境切换成功 ${project.id} -> ${envFileName}`);
       res.json({
         success: true,
         projectId: project.id,
@@ -512,7 +506,9 @@ async function startServer() {
 
   // Socket.IO 连接处理
   io.on('connection', (socket) => {
+    log('[SOCKET] Client connected');
     socket.on('disconnect', () => {
+      log('[SOCKET] Client disconnected');
     });
   });
 
@@ -522,7 +518,7 @@ async function startServer() {
     try {
       setupWatcher(p.id, p.dir);
     } catch (e) {
-      console.error(`[WARN] 恢复监控失败 ${p.dir}:`, e.message);
+      log(`[WATCHER] 恢复监控失败 ${p.dir}: ${e.message}`);
     }
   });
 
@@ -534,6 +530,7 @@ async function startServer() {
       const addr = server.address();
       const port = addr ? addr.port : 0;
       resolve(port);
+      log(`[SERVER] Server running on http://127.0.0.1:${port} (系统分配端口)`);
     }).on('error', (err) => {
       reject(err);
     });
@@ -542,6 +539,7 @@ async function startServer() {
 
 // 创建主窗口
 async function createWindow() {
+  log('[MAIN] 创建主窗口 …');
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -562,6 +560,7 @@ async function createWindow() {
   // 外部链接（http/https，如 App Info 里的 GitHub Source）一律用系统默认浏览器打开，
   // 不在 Electron 应用内开新窗口。返回 { action: 'deny' } 阻止内置窗口打开。
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    log(`[MAIN] 外部链接交由系统默认浏览器打开: ${url}`);
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url);
     }
@@ -574,6 +573,7 @@ async function createWindow() {
   // 加载前端页面
   const startUrl = `http://127.0.0.1:${port}`;
   mainWindow.loadURL(startUrl);
+  log(`[MAIN] 加载前端 ${startUrl}`);
 
   // 开发模式下打开开发者工具
   if (process.env.NODE_ENV === 'development') {
@@ -597,16 +597,18 @@ function initAutoUpdater() {
 
   // 无论是否打包，先注册 app:get-info，供前端「App Info」关于弹窗展示应用信息
   ipcMain.handle('app:get-info', () => {
+    log('[IPC] get-info');
     return {
       version: app.getVersion(),          // 应用版本（取 package.json 的 version）
       isDev: !app.isPackaged,             // 是否开发模式（反向即是否打包）
       dataFilePath: DATA_FILE,            // 项目数据文件 data.json 完整路径
-      logFilePath: path.join(LOG_DIR, 'main.log'), // 主进程日志路径
+      logFilePath: path.join(REAL_USER_DATA, 'logs', 'main.log'), // 主进程日志路径
       repoUrl: 'https://github.com/bynow2code/env-switch' // 源码仓库地址
     }
   });
 
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
+    log('[UPDATE] 开发模式：跳过真实更新检查（打包后才会真正连 GitHub）');
   if (!app.isPackaged) {
     ipcMain.handle('app:check-updates', async () => {
       if (mainWindow) {
@@ -636,7 +638,7 @@ function initWinUpdater() {
   try {
     autoUpdater = require('electron-updater').autoUpdater;
   } catch (e) {
-    console.error('[UPDATE] electron-updater 不可用:', e.message);
+    log(`[UPDATE] electron-updater 不可用: ${e.message}`);
     ipcMain.handle('app:check-updates', async () => {
       if (mainWindow) mainWindow.webContents.send('update-event', { type: 'error', message: 'Updater not available.' });
     });
@@ -655,6 +657,7 @@ function initWinUpdater() {
     owner: 'bynow2code',
     repo: 'env-switch'
   });
+  log('[UPDATE] feedURL 已设置: provider=github, owner=bynow2code, repo=env-switch');
 
   // 统一的事件转发：主进程 autoUpdater 事件 -> 渲染进程（update-event 通道）
   const send = (payload) => {
@@ -662,58 +665,70 @@ function initWinUpdater() {
   };
 
   autoUpdater.on('checking-for-update', () => {
+    log('[UPDATE] 事件: checking-for-update（开始连接更新源）');
     send({ type: 'checking' });
   });
   autoUpdater.on('update-available', (info) => {
+    log(`[UPDATE] 事件: update-available, version = ${info && info.version}`);
     send({ type: 'available', version: info.version, releaseNotes: info.releaseNotes || '' });
   });
   autoUpdater.on('update-not-available', (info) => {
+    log(`[UPDATE] 事件: update-not-available, version = ${info && info.version}`);
     send({ type: 'not-available', version: info.version });
   });
   autoUpdater.on('download-progress', (p) => {
     const percent = Math.round(p.percent || 0);
+    log(`[UPDATE] 事件: download-progress ${percent}%`);
     send({ type: 'downloading', progress: percent });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    log(`[UPDATE] 事件: update-downloaded, version = ${info && info.version}`);
     send({ type: 'downloaded', version: info.version });
   });
   autoUpdater.on('error', (err) => {
     const msg = (err && err.message) || String(err);
-    console.error('[UPDATE] 事件: error:', msg);
+    log(`[UPDATE] 事件: error: ${msg}`);
     send({ type: 'error', message: msg });
   });
 
   // IPC：检查更新（带防重入 + 20s 超时兜底，避免国内网络访问 GitHub 挂起时前端永久卡住）
   ipcMain.handle('app:check-updates', async () => {
     if (isChecking) {
+      log('[UPDATE] checkForUpdates 忽略 - 正在检查中');
       return;
     }
     isChecking = true;
+    log('[UPDATE] 开始 checkForUpdates() …（最多等待 20s）');
     const timeout = new Promise((_, reject) =>
       setTimeout(() => {
-        console.warn('[UPDATE] 20s 超时触发：放弃等待 checkForUpdates（通常是网络连不上 GitHub）');
+        log('[UPDATE] 20s 超时触发：放弃等待 checkForUpdates（通常是网络连不上 GitHub）');
         reject(new Error('检查更新超时（可能网络无法访问 GitHub，请检查网络或代理）'));
       }, 20000)
     );
     try {
       const result = await Promise.race([autoUpdater.checkForUpdates(), timeout]);
+      log(`[UPDATE] checkForUpdates 正常返回: ${result ? '有结果（见后续事件）' : result}`);
     } catch (e) {
-      console.error('[UPDATE] checkForUpdates 失败/超时:', e.message);
+    log(`[UPDATE] checkForUpdates 失败/超时: ${e.message}`);
       send({ type: 'error', message: e.message });
     } finally {
       isChecking = false;
+      log('[UPDATE] checkForUpdates 流程结束 (isChecking=false)');
     }
   });
 
   ipcMain.handle('app:download-update', async () => {
     if (isDownloading) {
+      log('[UPDATE] downloadUpdate 忽略 - 正在下载中');
       return;
     }
     isDownloading = true;
+    log('[UPDATE] download-update 开始');
     try {
       await autoUpdater.downloadUpdate();
+      log('[UPDATE] download-update 完成');
     } catch (e) {
-      console.error('[UPDATE] downloadUpdate 失败:', e.message);
+    log(`[UPDATE] downloadUpdate 失败: ${e.message}`);
       send({ type: 'error', message: e.message });
     } finally {
       isDownloading = false;
@@ -723,9 +738,10 @@ function initWinUpdater() {
   ipcMain.handle('app:start-update', () => {
     try {
       // quitAndInstall(isSilent, isForceRunAfter) -> 先退出再强制安装并重启
+      log('[UPDATE] start-update 开始 (quitAndInstall)');
       autoUpdater.quitAndInstall(false, true);
     } catch (e) {
-      console.error('[UPDATE] quitAndInstall 失败:', e.message);
+    log(`[UPDATE] quitAndInstall 失败: ${e.message}`);
       send({ type: 'error', message: e.message });
     }
   });
@@ -810,8 +826,9 @@ function initMacUpdater() {
 
   // IPC：检查更新（带 20s 超时兜底）
   ipcMain.handle('app:check-updates', async () => {
-    if (isChecking) return;
+    if (isChecking) { log('[UPDATE-MAC] check-updates 忽略 - 正在检查中'); return; }
     isChecking = true;
+    log('[UPDATE-MAC] check-updates 开始 …');
     send({ type: 'checking' });
     try {
       const rel = await Promise.race([
@@ -820,32 +837,38 @@ function initMacUpdater() {
       ]);
       const current = app.getVersion();
       if (!rel.version || cmpVersion(rel.version, current) <= 0) {
+        log(`[UPDATE-MAC] 已是最新版本 ${current}`);
         send({ type: 'not-available', version: current });
       } else if (!rel.asset) {
+        log(`[UPDATE-MAC] 找到新版本 ${rel.version}，但未匹配架构(${process.arch})的更新包`);
         send({ type: 'error', message: `未找到匹配当前架构(${process.arch})的更新包` });
       } else {
         pendingAsset = rel.asset;
         pendingVersion = rel.version;
+        log(`[UPDATE-MAC] 发现新版本 ${rel.version}（asset: ${rel.asset.name}）`);
         send({ type: 'available', version: rel.version, releaseNotes: rel.releaseNotes });
       }
     } catch (e) {
+      log(`[UPDATE-MAC] check-updates 失败: ${e.message}`);
       send({ type: 'error', message: e.message });
     } finally {
       isChecking = false;
+      log('[UPDATE-MAC] check-updates 流程结束');
     }
   });
 
   // IPC：下载更新
   ipcMain.handle('app:download-update', async () => {
     if (isDownloading) return;
-    if (!pendingAsset) { send({ type: 'error', message: '没有可下载的更新（请先检查更新）' }); return; }
+    if (!pendingAsset) { log('[UPDATE-MAC] download-update 忽略 - 无待下载更新'); send({ type: 'error', message: '没有可下载的更新（请先检查更新）' }); return; }
     isDownloading = true;
+    log(`[UPDATE-MAC] download-update 开始（${pendingAsset.name}）`);
     try {
       const tmpDir = path.join(app.getPath('temp'), 'envswitch-update');
       fs.rmSync(tmpDir, { recursive: true, force: true });
       fs.mkdirSync(tmpDir, { recursive: true });
       const zipPath = path.join(tmpDir, pendingAsset.name);
-      await downloadFile(pendingAsset.browser_download_url, zipPath, (percent) => send({ type: 'downloading', progress: percent }));
+      await downloadFile(pendingAsset.browser_download_url, zipPath, (percent) => { log(`[UPDATE-MAC] 下载进度 ${percent}%`); send({ type: 'downloading', progress: percent }); });
       // 解压（macOS 内置 ditto，无需额外依赖）
       const extractDir = path.join(tmpDir, 'extracted');
       fs.mkdirSync(extractDir, { recursive: true });
@@ -857,8 +880,10 @@ function initMacUpdater() {
       const apps = fs.readdirSync(extractDir).filter(n => n.endsWith('.app'));
       if (apps.length === 0) throw new Error('更新包内未找到 .app');
       pendingAppPath = path.join(extractDir, apps[0]);
+      log(`[UPDATE-MAC] 下载并解压完成，新 .app: ${pendingAppPath}`);
       send({ type: 'downloaded', version: pendingVersion });
     } catch (e) {
+      log(`[UPDATE-MAC] download-update 失败: ${e.message}`);
       send({ type: 'error', message: e.message });
     } finally {
       isDownloading = false;
@@ -867,9 +892,10 @@ function initMacUpdater() {
 
   // IPC：退出并安装更新（后台脚本替换 .app 后重启）
   ipcMain.handle('app:start-update', () => {
-    if (!pendingAppPath) { send({ type: 'error', message: '尚未下载更新' }); return; }
+    if (!pendingAppPath) { log('[UPDATE-MAC] start-update 忽略 - 尚未下载更新'); send({ type: 'error', message: '尚未下载更新' }); return; }
     try {
       const targetApp = path.resolve(process.execPath, '../../..'); // …/EnvSwitch.app
+      log(`[UPDATE-MAC] start-update 开始（替换 ${targetApp}，重启后生效）`);
       const script = `#!/bin/bash
 set -e
 PID="${process.pid}"
@@ -894,9 +920,11 @@ open "$TARGET_APP"
       const scriptPath = path.join(app.getPath('temp'), 'envswitch-update', 'install.sh');
       fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
       fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+      log(`[UPDATE-MAC] 后台安装脚本已写入 ${scriptPath}，即将退出并交由脚本替换 .app`);
       spawn('bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref();
       app.quit();
     } catch (e) {
+      log(`[UPDATE-MAC] start-update 失败: ${e.message}`);
       send({ type: 'error', message: e.message });
     }
   });
@@ -905,13 +933,16 @@ open "$TARGET_APP"
 // 单实例锁（参考 easy-ops「防止串台」）：保证同一时间只有一个 EnvSwitch 在运行，
 // 第二个启动实例会聚焦已有窗口，而不是再起一个后端/窗口与之争抢资源。
 const gotTheLock = app.requestSingleInstanceLock();
+log(`[MAIN] requestSingleInstanceLock -> ${gotTheLock ? '主实例' : '次实例(将退出)'}`);
 
 if (!gotTheLock) {
   // 没拿到锁说明已有实例在运行，当前（第二个）实例直接退出
   app.quit();
+  log('[MAIN] 已有实例在运行，当前实例退出');
 } else {
   // 第二个实例尝试启动时：只聚焦已有窗口，不重复创建
   app.on('second-instance', () => {
+    log('[MAIN] second-instance：聚焦已有窗口');
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
@@ -921,12 +952,15 @@ if (!gotTheLock) {
 
   // 当 Electron 准备好时创建窗口
   app.whenReady().then(() => {
+    log(`[MAIN] === EnvSwitch 启动 (isPackaged=${app.isPackaged}) ===`);
     createWindow();
+    log('[MAIN] app ready，创建窗口');
 
     // 窗口建好后再初始化自动更新（事件转发依赖 mainWindow）
     initAutoUpdater();
 
     app.on('activate', () => {
+      log('[MAIN] activate：重建窗口');
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
       }
@@ -936,6 +970,7 @@ if (!gotTheLock) {
 
 // 当所有窗口关闭时退出应用
 app.on('window-all-closed', () => {
+  log('[MAIN] 所有窗口关闭');
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -943,6 +978,7 @@ app.on('window-all-closed', () => {
 
 // 应用退出时清理
 app.on('before-quit', () => {
+  log('[MAIN] before-quit：关闭 server 与 watchers');
   if (server) {
     server.close();
   }

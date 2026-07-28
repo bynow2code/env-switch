@@ -129,12 +129,6 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState({ version: '', releaseNotes: '' })
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateError, setUpdateError] = useState('')
-  // 更新排查日志（事件流）：在弹窗内可见，无需开 DevTools 也能看卡在哪一步
-  const [updateLog, setUpdateLog] = useState([])
-  const pushUpdateLog = (type, msg) => {
-    const t = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    setUpdateLog(prev => [...prev, `[${t}] ${type}: ${msg}`].slice(-50)) // 最多保留最近 50 条
-  }
 
   // 复制文本到剪贴板（App Info 弹窗里 Copy 按钮用），失败静默处理
   const copyToClipboard = (text) => {
@@ -208,32 +202,26 @@ function App() {
           case 'checking':
             setUpdateState('checking')
             setUpdateError('')
-            pushUpdateLog('checking', '开始检查更新')
             break
           case 'available':
             setUpdateState('available')
             setUpdateInfo({ version: data.version, releaseNotes: data.releaseNotes || '' })
-            pushUpdateLog('available', `发现新版本 v${data.version}`)
             break
           case 'not-available':
             setUpdateState('not-available')
-            pushUpdateLog('not-available', `已是最新 (v${data.version || appVersion})`)
             break
           case 'downloading':
             setUpdateState('downloading')
             setUpdateProgress(Math.min(data.progress || 0, 99))
-            pushUpdateLog('downloading', `下载中 ${data.progress || 0}%`)
             break
           case 'downloaded':
             setUpdateState('downloaded')
             setUpdateProgress(100)
             if (data.version) setUpdateInfo(prev => ({ ...prev, version: data.version }))
-            pushUpdateLog('downloaded', `下载完成 v${data.version || ''}`)
             break
           case 'error':
             setUpdateState('error')
             setUpdateError(data.message || '未知错误')
-            pushUpdateLog('error', `错误: ${data.message || '未知错误'}`)
             break
           default:
             break
@@ -248,18 +236,13 @@ function App() {
   const handleCheckUpdates = () => {
     setShowUpdateModal(true)
     setUpdateError('')
-    setUpdateLog([]) // 每次打开清空，保证日志对应本次检查会话
     if (updateState !== 'downloaded') setUpdateState('checking')
     const api = window.electronAPI
-    pushUpdateLog('invoke', '调用 checkForUpdates (ipc: app:check-updates)')
     if (api && api.checkForUpdates) {
       api.checkForUpdates().catch(() => {
         setUpdateState('error')
         setUpdateError('Running in dev mode. Auto-update only works in packaged builds.')
-        pushUpdateLog('error', 'dev mode / 调用被拒绝')
       })
-    } else {
-      pushUpdateLog('error', 'electronAPI.checkForUpdates 不存在（preload 未暴露？）')
     }
   }
 
@@ -496,18 +479,6 @@ function App() {
                   <pre className="update-notes">{updateError}</pre>
                 </div>
               )}
-
-              {/* 更新排查日志：可见事件流，方便定位卡在哪一步 */}
-              <div className="update-log">
-                <div className="update-log-title">排查日志</div>
-                {updateLog.length === 0 ? (
-                  <div className="update-log-empty">（暂无日志，点击「检查更新」后这里会显示事件流）</div>
-                ) : (
-                  updateLog.map((line, i) => (
-                    <div key={i} className="update-log-line">{line}</div>
-                  ))
-                )}
-              </div>
             </div>
             <div className="dialog-actions">
               {updateState === 'downloaded' ? (

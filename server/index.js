@@ -13,6 +13,11 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
+// 请求日志（对齐 easy-ops：每个 API 请求都打点 method + url）
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 // 获取应用根目录（兼容开发模式和 pkg 打包）
 // pkg 打包时 process.execPath 指向 exe；开发时使用 __dirname
@@ -23,8 +28,7 @@ const DATA_DIR = path.join(APP_DIR, 'server');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const watchers = new Map(); // projectId -> chokidar watcher
 
-// ===== 日志策略（与 Electron 主进程一致）=====
-// 仅保留错误日志：开发模式(node 直接运行，非 pkg 打包)输出到终端，pkg 打包后写入 server/logs/server.log
+// ===== 日志策略（对齐 easy-ops：信息日志同时输出到终端 + 写入 server/logs/server.log）=====
 const IS_DEV = !process.pkg
 const SERVER_LOG_DIR = path.join(APP_DIR, 'logs')
 
@@ -35,6 +39,7 @@ function appendServerLog(line) {
   } catch (e) { /* 日志写入失败不阻塞主流程 */ }
 }
 
+const _origLog = console.log.bind(console)
 const _origErr = console.error.bind(console)
 const _origWarn = console.warn.bind(console)
 const fmtServerLog = (args) => args.map(a => {
@@ -43,19 +48,24 @@ const fmtServerLog = (args) => args.map(a => {
   try { return JSON.stringify(a) } catch (e) { return String(a) }
 }).join(' ')
 
-// 错误日志：dev 输出终端，prod 写入日志文件
+// 信息日志：终端 + server.log 双写（与 easy-ops 主进程 log() 行为一致，开发/打包均记录）
+function serverLog(message) {
+  _origLog(`[SERVER] ${message}`)
+  appendServerLog(message)
+}
+console.log = (...args) => serverLog(fmtServerLog(args))
+
+// 错误日志：dev 同时输出终端 + 文件；prod 仅写入日志文件
 console.error = (...args) => {
   const msg = fmtServerLog(args)
   if (IS_DEV) _origErr(...args)
-  else appendServerLog('[ERROR] ' + msg)
+  appendServerLog('[ERROR] ' + msg)
 }
 console.warn = (...args) => {
   const msg = fmtServerLog(args)
   if (IS_DEV) _origWarn(...args)
-  else appendServerLog('[WARN] ' + msg)
+  appendServerLog('[WARN] ' + msg)
 }
-// 信息日志不再输出（仅保留错误日志）
-console.log = () => {}
 
 // 确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
@@ -346,6 +356,7 @@ app.post('/api/projects', (req, res) => {
 
   // 设置文件监控
   setupWatcher(project.id, normalizedDir);
+  console.log(`项目已添加 ${project.id} ${normalizedDir}`);
 
   const info = getProjectInfo(normalizedDir);
   res.json({
@@ -448,6 +459,7 @@ app.post('/api/projects/:id/switch', (req, res) => {
 
     const info = getProjectInfo(project.dir);
     io.emit('env-changed', { projectId: project.id, ...info });
+    console.log(`环境切换成功 ${project.id} -> ${envFileName}`);
     res.json({
       success: true,
       projectId: project.id,
@@ -489,7 +501,9 @@ if (fs.existsSync(clientDist)) {
 
 // Socket.IO 连接处理
 io.on('connection', (socket) => {
+  console.log('Client connected');
   socket.on('disconnect', () => {
+    console.log('Client disconnected');
   });
 });
 
@@ -536,4 +550,5 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
+  console.log(`Server running on http://127.0.0.1:${PORT}`);
 });
