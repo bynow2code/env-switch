@@ -554,3 +554,115 @@ body {
   font-size: 13px;
   border-top: 1px solid #f3f4f6;
 }
+
+/* ============================================================
+   App Info 图标按钮（header 右侧，无文字，符合工具栏紧凑风格）
+   ============================================================ */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: #fff;
+  color: #4f46e5;
+  border: 1.5px solid #4f46e5;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-icon:hover {
+  background: #4f46e5;
+  color: #fff;
+}
+
+/* ============================================================
+   App Info 关于弹窗（参考 easy-ops 的 App Info 实现）
+   ============================================================ */
+.info-dialog {
+  width: 440px;
+}
+
+.info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.info-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+
+.info-row label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.info-value {
+  font-size: 14px;
+  color: #1a1a2e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 路径型字段（Data File / Log File）胶囊容器 */
+.info-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+
+.info-path-text {
+  flex: 1;
+  min-width: 0;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: #374151;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+/* Copy 按钮 */
+.btn-copy {
+  font-size: 11px;
+  padding: 3px 10px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #374151;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.btn-copy:hover {
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+
+/* GitHub 源码链接 */
+.info-link {
+  color: #4f46e5;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.info-link:hover {
+  text-decoration: underline;
+}

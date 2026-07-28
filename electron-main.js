@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -569,6 +569,16 @@ async function createWindow() {
   // 隐藏菜单栏
   Menu.setApplicationMenu(null);
 
+  // 外部链接（http/https，如 App Info 里的 GitHub Source）一律用系统默认浏览器打开，
+  // 不在 Electron 应用内开新窗口。返回 { action: 'deny' } 阻止内置窗口打开。
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      log('MAIN', '外部链接交由系统默认浏览器打开:', url);
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
   // 启动服务器
   const port = await startServer();
 
@@ -592,8 +602,17 @@ function initAutoUpdater() {
   if (updaterInitialized) return; // 仅注册一次（mac 重新激活窗口会再次进入 createWindow）
   updaterInitialized = true;
 
-  // 无论是否打包，先注册 app:get-info，供前端展示当前版本号
-  ipcMain.handle('app:get-info', () => { log('IPC', 'get-info'); return { version: app.getVersion() }; });
+  // 无论是否打包，先注册 app:get-info，供前端「App Info」关于弹窗展示应用信息
+  ipcMain.handle('app:get-info', () => {
+    log('IPC', 'get-info')
+    return {
+      version: app.getVersion(),          // 应用版本（取 package.json 的 version）
+      isDev: !app.isPackaged,             // 是否开发模式（反向即是否打包）
+      dataFilePath: DATA_FILE,            // 项目数据文件 data.json 完整路径
+      logFilePath: path.join(LOG_DIR, 'main.log'), // 主进程日志路径
+      repoUrl: 'https://github.com/bynow2code/env-switch' // 源码仓库地址
+    }
+  });
 
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
   if (!app.isPackaged) {

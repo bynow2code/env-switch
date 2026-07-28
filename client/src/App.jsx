@@ -121,6 +121,8 @@ function App() {
 
   // 自动更新相关状态
   const [appVersion, setAppVersion] = useState('')          // 当前版本号
+  const [appInfo, setAppInfo] = useState(null)              // App Info 完整信息（关于弹窗展示）
+  const [showInfoModal, setShowInfoModal] = useState(false) // 关于弹窗显隐
   const [showUpdateModal, setShowUpdateModal] = useState(false)
   // updateState: idle | checking | available | not-available | downloading | downloaded | error
   const [updateState, setUpdateState] = useState('idle')
@@ -132,6 +134,13 @@ function App() {
   const pushUpdateLog = (type, msg) => {
     const t = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     setUpdateLog(prev => [...prev, `[${t}] ${type}: ${msg}`].slice(-50)) // 最多保留最近 50 条
+  }
+
+  // 复制文本到剪贴板（App Info 弹窗里 Copy 按钮用），失败静默处理
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => {})
+    }
   }
 
   const sensors = useSensors(
@@ -181,10 +190,13 @@ function App() {
     const api = window.electronAPI
     if (!api) return
 
-    // 获取当前版本（用于弹窗里显示「已是最新版本 vX.Y.Z」）
+    // 获取应用信息（版本号 + 关于弹窗展示的环境/路径信息）
     if (api.getAppInfo) {
       api.getAppInfo()
-        .then(info => { if (info && info.version) setAppVersion(info.version) })
+        .then(info => {
+          if (info && info.version) setAppVersion(info.version)
+          if (info) setAppInfo(info)
+        })
         .catch(() => {})
     }
 
@@ -378,6 +390,13 @@ function App() {
       <header className="app-header">
         <h1>EnvSwitch</h1>
         <span className="subtitle">ENV 配置管理工具</span>
+        <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+        </button>
         <button className="btn-update" onClick={handleCheckUpdates} title="检查更新" disabled={updateState === 'checking'}>
           {updateState === 'downloaded' ? '更新可用' : '检查更新'}
         </button>
@@ -504,6 +523,53 @@ function App() {
               ) : (
                 <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>关闭</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showInfoModal && (
+        <div className="dialog-overlay">
+          <div className="dialog info-dialog" onClick={e => e.stopPropagation()}>
+            <h2>App Info</h2>
+            <div className="info-body">
+              <div className="info-row">
+                <label>Version</label>
+                <div className="info-value">v{appInfo?.version || appVersion}</div>
+              </div>
+              <div className="info-row">
+                <label>Mode</label>
+                <div className="info-value">{appInfo?.isDev ? 'Development' : 'Production'}</div>
+              </div>
+              {appInfo?.dataFilePath && (
+                <div className="info-row">
+                  <label>Data File</label>
+                  <div className="info-path">
+                    <span className="info-path-text">{appInfo.dataFilePath}</span>
+                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.dataFilePath)}>Copy</button>
+                  </div>
+                </div>
+              )}
+              {appInfo?.logFilePath && (
+                <div className="info-row">
+                  <label>Log File</label>
+                  <div className="info-path">
+                    <span className="info-path-text">{appInfo.logFilePath}</span>
+                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.logFilePath)}>Copy</button>
+                  </div>
+                </div>
+              )}
+              {appInfo?.repoUrl && (
+                <div className="info-row">
+                  <label>Source</label>
+                  <div className="info-value">
+                    <a className="info-link" href={appInfo.repoUrl} target="_blank" rel="noreferrer">GitHub</a>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="dialog-actions">
+              <button className="btn-cancel" onClick={() => setShowInfoModal(false)}>Close</button>
             </div>
           </div>
         </div>
