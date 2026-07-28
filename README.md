@@ -78,6 +78,7 @@ EnvSwitch 把这些 `.env` 集中管起来：
 
 - 窗口头部「检查更新」按钮可手动触发版本检查，发现新版本会弹窗提示下载安装。
 - 仅**打包版本**会真正连接 GitHub Releases；开发模式（未打包）下检查会提示 "Running in dev mode"，不会联网。
+- 平台差异：Windows 走 electron-updater（NSIS 流程，未签名可用）；macOS 因个人发布无 Apple 签名，采用**自研更新器**——直接下载 GitHub Release 的 zip、`ditto` 解压、后台脚本替换 `.app` 并去除 quarantine 标记，从而无需签名即可完成更新（绕开 electron-updater 在 macOS 上对运行 App 代码签名的强制校验，避免出现 `Could not get code signature for running application` 报错）。
 
 ### 6. 查看应用信息（App Info）
 

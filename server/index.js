@@ -23,6 +23,40 @@ const DATA_DIR = path.join(APP_DIR, 'server');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const watchers = new Map(); // projectId -> chokidar watcher
 
+// ===== 日志策略（与 Electron 主进程一致）=====
+// 仅保留错误日志：开发模式(node 直接运行，非 pkg 打包)输出到终端，pkg 打包后写入 server/logs/server.log
+const IS_DEV = !process.pkg
+const SERVER_LOG_DIR = path.join(APP_DIR, 'logs')
+
+function appendServerLog(line) {
+  try {
+    if (!fs.existsSync(SERVER_LOG_DIR)) fs.mkdirSync(SERVER_LOG_DIR, { recursive: true })
+    fs.appendFileSync(path.join(SERVER_LOG_DIR, 'server.log'), `[${new Date().toISOString()}] ${line}\n`)
+  } catch (e) { /* 日志写入失败不阻塞主流程 */ }
+}
+
+const _origErr = console.error.bind(console)
+const _origWarn = console.warn.bind(console)
+const fmtServerLog = (args) => args.map(a => {
+  if (typeof a === 'string') return a
+  if (a instanceof Error) return a.stack || a.message
+  try { return JSON.stringify(a) } catch (e) { return String(a) }
+}).join(' ')
+
+// 错误日志：dev 输出终端，prod 写入日志文件
+console.error = (...args) => {
+  const msg = fmtServerLog(args)
+  if (IS_DEV) _origErr(...args)
+  else appendServerLog('[ERROR] ' + msg)
+}
+console.warn = (...args) => {
+  const msg = fmtServerLog(args)
+  if (IS_DEV) _origWarn(...args)
+  else appendServerLog('[WARN] ' + msg)
+}
+// 信息日志不再输出（仅保留错误日志）
+console.log = () => {}
+
 // 确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -178,18 +212,15 @@ function setupWatcher(projectId, projectDir) {
 
   // WSL 路径不支持 chokidar 监控，跳过
   if (isWslPath(projectDir)) {
-    console.log(`[INFO] WSL 路径 ${projectDir}，跳过文件监控`);
     return;
   }
 
   // 只监控文件，如果 .env 是目录则跳过
   try {
     if (fs.existsSync(envPath) && fs.statSync(envPath).isDirectory()) {
-      console.log(`[WARN] ${envPath} 是一个目录，跳过文件监控`);
       return;
     }
   } catch (e) {
-    console.log(`[WARN] 无法访问 ${envPath}，跳过文件监控`);
     return;
   }
 
@@ -458,9 +489,7 @@ if (fs.existsSync(clientDist)) {
 
 // Socket.IO 连接处理
 io.on('connection', (socket) => {
-  console.log('Client connected');
   socket.on('disconnect', () => {
-    console.log('Client disconnected');
   });
 });
 
@@ -492,10 +521,8 @@ server.on('error', (err) => {
           execSync(`taskkill /F /PID ${pid} 2>nul || true`, { stdio: 'pipe' });
         } catch (e) {}
       });
-      console.log('已关闭旧进程，3秒后重试...');
       setTimeout(() => {
         server.listen(PORT, () => {
-          console.log(`EnvSwitch server running on http://localhost:${PORT}`);
         });
       }, 3000);
     } catch (e) {
@@ -509,5 +536,4 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`EnvSwitch server running on http://localhost:${PORT}`);
 });
