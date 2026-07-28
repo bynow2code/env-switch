@@ -266,8 +266,8 @@ async function startServer() {
   expressApp.use(cors());
   expressApp.use(express.json());
 
-  // 静态文件服务
-  const clientDist = path.join(__dirname, 'public');
+  // 静态文件服务（前端构建产物：client/dist，对齐 easy-ops 的 client/dist 方案）
+  const clientDist = path.join(__dirname, 'client', 'dist');
   expressApp.use(express.static(clientDist));
 
   // API 路由
@@ -496,7 +496,7 @@ async function createWindow() {
       // 预加载脚本：向渲染进程暴露 window.electronAPI（更新等能力），隔离环境下唯一安全通道
       preload: path.join(__dirname, 'preload.js')
     },
-    icon: path.join(__dirname, 'public', 'logo-win.png')
+    icon: path.join(__dirname, 'client', 'dist', 'logo-win.png')
   });
 
   // 隐藏菜单栏

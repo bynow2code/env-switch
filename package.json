@@ -37,7 +37,7 @@
     },
     "files": [
       "electron-main.js",
-      "public/**/*",
+      "client/dist/**/*",
       "package.json"
     ],
     "win": {

@@ -1,11 +1,11 @@
 // 从 client/public/favicon.svg 渲染生成「打包用 logo」（参考 easy-ops）
 //   client/public/logo-1024.png  -> 默认图标（build.icon），electron-builder 自动转 icns 等
-//   client/public/logo-win.png   -> 运行时窗口图标（electron-main.js 加载 public/logo-win.png）
+//   client/public/logo-win.png   -> 运行时窗口图标（electron-main.js 加载 client/dist/logo-win.png）
 //   client/public/logo-mac.png   -> macOS 图标（build.mac.icon）
 //   client/public/logo.ico       -> Windows 图标（build.win.icon + NSIS 安装/卸载程序图标）
 //
-// 注意：根 public/ 是 Vite 构建输出目录（vite.config.js 的 outDir: '../public'），
-//       本脚本产出的文件会在 npm run build 时由 Vite 从 client/public 拷贝到 public/，无需手动生成。
+// 注意：client/dist/ 是 Vite 构建输出目录（vite.config.js 的 outDir: 'dist'），
+//       本脚本产出的文件会在 npm run build 时由 Vite 从 client/public 拷贝到 client/dist/，无需手动生成。
 
 const fs = require('fs');
 const path = require('path');

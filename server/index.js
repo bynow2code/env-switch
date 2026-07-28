@@ -444,9 +444,9 @@ app.get('/api/projects/:id/env-file/:fileName', (req, res) => {
   res.json({ fileName: req.params.fileName, vars: envVars });
 });
 
-// 静态文件服务（生产环境）
-// 打包后从 exe 所在目录读取前端文件
-const clientDist = path.join(APP_DIR, 'public');
+// 静态文件服务（生产环境，独立运行 server 时伺服前端构建产物）
+// 前端构建产物位于项目根 client/dist（vite.config.js 的 outDir: 'dist'）
+const clientDist = path.join(ROOT_DIR, 'client', 'dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {
