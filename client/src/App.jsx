@@ -141,12 +141,14 @@ function App() {
   )
 
   const loadProjects = useCallback(async () => {
+    console.log('[WEB] 加载项目列表 …')
     try {
       const res = await fetch(`${API_BASE}/projects`)
       const data = await res.json()
+      console.log('[WEB] 项目列表加载完成，共', data.length, '个')
       setProjects(data)
     } catch (e) {
-      console.error('加载项目失败:', e)
+      console.error('[WEB] 加载项目失败:', e)
     } finally {
       setLoading(false)
     }
@@ -161,6 +163,7 @@ function App() {
     setSocket(s)
 
     s.on('env-changed', (data) => {
+      console.log('[WEB] 收到 env-changed', data.projectId, 'appName=', data.appName, 'appEnv=', data.appEnv)
       setProjects(prev =>
         prev.map(p =>
           p.id === data.projectId
@@ -251,6 +254,7 @@ function App() {
   // 点击「下载并更新」：开始下载
   const handleDownloadUpdate = () => {
     if (updateState === 'downloading') return // 防重复点击
+    console.log('[WEB] 触发 downloadUpdate')
     setUpdateProgress(0)
     setUpdateState('downloading')
     const api = window.electronAPI
@@ -259,10 +263,11 @@ function App() {
 
   // 点击「重启并更新」：退出并安装
   const handleStartUpdate = () => {
+    console.log('[WEB] 触发 startUpdate')
     const api = window.electronAPI
     if (api && api.startUpdate) {
       api.startUpdate().catch((err) => {
-        console.error('startUpdate failed:', err)
+        console.error('[WEB] startUpdate failed:', err)
         setUpdateError('重启失败，请手动关闭并重新打开应用。')
         setUpdateState('error')
       })
@@ -275,6 +280,7 @@ function App() {
       setError('请输入项目目录路径')
       return
     }
+    console.log('[WEB] 添加项目', newDir.trim())
     try {
       const res = await fetch(`${API_BASE}/projects`, {
         method: 'POST',
@@ -283,10 +289,12 @@ function App() {
       })
       const data = await res.json()
       if (res.ok) {
+        console.log('[WEB] 项目添加成功', data.id)
         setProjects(prev => [...prev, data])
         setShowAddDialog(false)
         setNewDir('')
       } else {
+        console.warn('[WEB] 添加项目失败', data.error)
         setError(data.error || '添加失败')
       }
     } catch (e) {
@@ -295,17 +303,22 @@ function App() {
   }
 
   const deleteProject = async (id) => {
+    console.log('[WEB] 删除项目', id)
     try {
       const res = await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' })
       if (res.ok) {
+        console.log('[WEB] 项目已删除', id)
         setProjects(prev => prev.filter(p => p.id !== id))
+      } else {
+        console.warn('[WEB] 删除项目失败', id, res.status)
       }
     } catch (e) {
-      console.error('删除失败:', e)
+      console.error('[WEB] 删除失败:', e)
     }
   }
 
   const switchEnv = async (projectId, envFileName) => {
+    console.log('[WEB] 切换环境', projectId, '->', envFileName)
     setSwitching(prev => ({ ...prev, [projectId]: envFileName }))
     try {
       const res = await fetch(`${API_BASE}/projects/${projectId}/switch`, {
@@ -315,6 +328,7 @@ function App() {
       })
       const data = await res.json()
       if (res.ok) {
+        console.log('[WEB] 环境切换成功', projectId, '->', envFileName)
         setProjects(prev =>
           prev.map(p =>
             p.id === projectId
@@ -323,6 +337,7 @@ function App() {
           )
         )
       } else {
+        console.warn('[WEB] 环境切换失败', projectId, data.error)
         alert(data.error || '切换失败')
       }
     } catch (e) {
@@ -343,11 +358,12 @@ function App() {
 
       // 持久化排序到后端
       const ids = newOrder.map(p => p.id)
+      console.log('[WEB] 保存排序', ids)
       fetch(`${API_BASE}/projects/reorder`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids })
-      }).catch(e => console.error('保存排序失败:', e))
+      }).catch(e => console.error('[WEB] 保存排序失败:', e))
 
       return newOrder
     })
@@ -372,7 +388,7 @@ function App() {
       </header>
 
       {showAddDialog && (
-        <div className="dialog-overlay" onClick={() => setShowAddDialog(false)}>
+        <div className="dialog-overlay">
           <div className="dialog" onClick={e => e.stopPropagation()}>
             <h2>添加项目</h2>
             <div className="form-group">
@@ -425,7 +441,7 @@ function App() {
       </div>
 
       {showUpdateModal && (
-        <div className="dialog-overlay" onClick={() => setShowUpdateModal(false)}>
+        <div className="dialog-overlay">
           <div className="dialog update-dialog" onClick={e => e.stopPropagation()}>
             <h2>检查更新</h2>
             <div className="update-body">

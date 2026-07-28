@@ -8,20 +8,69 @@ const fs = require('fs');
 const chokidar = require('chokidar');
 const { execSync } = require('child_process');
 
-// 捕获「真实的」userData：下方开发模式会把 userData 重定向到临时目录以解决 Chromium
-// 缓存目录写权限问题，但项目数据（data.json）仍需落在原始 userData 下，故先固定下来。
+// 先固定「真实的」userData 路径：下方开发模式会把 userData 重定向到临时缓存目录以解决
+// Chromium 缓存写权限问题，但日志目录与项目数据（data.json）需落在原始 userData 下，故先捕获。
+// 放在最顶部，确保日志工具定义时即可引用（日志目录在开发模式重定向之前就已锁定）。
 const REAL_USER_DATA = app.getPath('userData');
+
+// 统一日志工具（对齐 easy-ops：同时输出到控制台 + 写入 userData/logs/main.log）
+// 思路：覆盖 console.log/error/warn，使每次输出都追加到日志文件；
+// 这样无论通过 log(tag, ...) 还是直接 console.*，打包后都能在
+// %APPDATA%/<appName>/logs/main.log 查看（与 easy-ops 的 logs/main.log 一致）。
+
+// 安全格式化：字符串原样，Error 取 stack，对象转 JSON（循环引用降级为 String）
+const fmtLog = (args) => args.map(a => {
+  if (typeof a === 'string') return a
+  if (a instanceof Error) return a.stack || a.message
+  try { return JSON.stringify(a) } catch (e) { return String(a) }
+}).join(' ')
+
+// 日志目录：在开发模式「重定向 userData 到临时缓存目录」之前用真实 userData 固定下来，
+// 这样无论开发还是打包，日志都统一落在 %APPDATA%/EnvSwitch/logs/main.log（与 easy-ops 一致）。
+// 注：此处不能在 appendLog 内现取 app.getPath('userData')，否则开发模式会误落到临时缓存目录。
+const LOG_DIR = path.join(REAL_USER_DATA, 'logs');
+
+// 追加一行到 LOG_DIR/main.log（与 easy-ops 路径一致）
+function appendLog(line) {
+  try {
+    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true })
+    fs.appendFileSync(path.join(LOG_DIR, 'main.log'), `[${new Date().toISOString()}] ${line}\n`)
+  } catch (e) { /* 日志写入失败不阻塞主流程 */ }
+}
+
+// 保存原始 console 方法，避免递归调用
+const _origConsoleLog = console.log.bind(console)
+const _origConsoleErr = console.error.bind(console)
+const _origConsoleWarn = console.warn.bind(console)
+
+// 覆盖 console.*：原样打印 + 落盘（每次只追加一次，无重复）
+console.log = (...args) => { _origConsoleLog(...args); appendLog('[INFO] ' + fmtLog(args)) }
+console.error = (...args) => { _origConsoleErr(...args); appendLog('[ERROR] ' + fmtLog(args)) }
+console.warn = (...args) => { _origConsoleWarn(...args); appendLog('[WARN] ' + fmtLog(args)) }
+
+// 带模块前缀的便捷方法（最终都走被覆盖的 console.*，自动落盘）
+function log(tag, ...args) { console.log(`[${tag}]`, ...args) }
+function logErr(tag, ...args) { console.error(`[${tag}]`, ...args) }
+
+// 未捕获异常也写入日志（对齐 easy-ops 的健壮做法）
+process.on('uncaughtException', (err) => {
+  logErr('FATAL', 'uncaughtException:', err && err.stack || err)
+})
+process.on('unhandledRejection', (reason) => {
+  logErr('FATAL', 'unhandledRejection:', reason)
+})
 
 // 开发模式：将 Chromium 缓存（HTTP 磁盘缓存 + GPU 缓存）重定向到用户临时目录下可写目录，
 // 规避 Windows 上默认 userData 缓存目录出现「拒绝访问 (0x5) / Unable to move the cache /
 // Gpu Cache Creation failed」等无害噪声日志。仅开发模式生效；打包后沿用默认 userData，数据落点不变。
 if (!app.isPackaged) {
   const devCacheDir = path.join(app.getPath('temp'), 'envswitch-dev-cache');
+  log('MAIN', '开发模式：重定向 Chromium 缓存到', devCacheDir);
   try {
     fs.mkdirSync(devCacheDir, { recursive: true });
     app.setPath('userData', devCacheDir); // 缓存随之落到临时目录，GPU 缓存也一并解决
   } catch (e) {
-    console.warn('[dev] 无法重定向开发缓存目录，忽略:', e.message);
+    logErr('MAIN', '无法重定向开发缓存目录，忽略:', e.message);
   }
 }
 
@@ -84,6 +133,7 @@ function wslCopyFile(sourcePath, targetPath) {
     throw new Error('无法解析 WSL 路径');
   }
   const cmd = `wsl.exe -d ${source.distro} cp "${source.linuxPath}" "${target.linuxPath}"`;
+  log('WSL', 'copy', sourcePath, '->', targetPath);
   execSync(cmd, { stdio: 'pipe', timeout: 5000 });
 }
 
@@ -92,6 +142,7 @@ function wslReadFile(filePath) {
   const parsed = parseWslPath(filePath);
   if (!parsed) throw new Error('无法解析 WSL 路径');
   const cmd = `wsl.exe -d ${parsed.distro} cat "${parsed.linuxPath}"`;
+  log('WSL', 'read', filePath);
   return execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
 }
 
@@ -103,6 +154,7 @@ function isWslPath(filePath) {
 // 解析 .env 文件内容为键值对
 function parseEnvFile(filePath) {
   const result = {};
+  log('FILE', '解析', filePath);
   try {
     let content;
     if (isWslPath(filePath)) {
@@ -139,6 +191,7 @@ function parseEnvFile(filePath) {
 
 // 获取项目信息
 function getProjectInfo(projectDir) {
+  log('PROJECT', '读取项目信息', projectDir);
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
 
@@ -189,6 +242,7 @@ function getProjectInfo(projectDir) {
 
 // 设置文件监控
 function setupWatcher(projectId, projectDir) {
+  log('WATCHER', '设置监控', 'projectId=' + projectId, projectDir);
   // 清理旧的 watcher
   if (watchers.has(projectId)) {
     const old = watchers.get(projectId);
@@ -203,18 +257,18 @@ function setupWatcher(projectId, projectDir) {
 
   // WSL 路径不支持 chokidar 监控，跳过
   if (isWslPath(projectDir)) {
-    console.log(`[INFO] WSL 路径 ${projectDir}，跳过文件监控`);
+    log('WATCHER', 'WSL 路径，跳过文件监控', projectDir);
     return;
   }
 
   // 只监控文件，如果 .env 是目录则跳过
   try {
     if (fs.existsSync(envPath) && fs.statSync(envPath).isDirectory()) {
-      console.log(`[WARN] ${envPath} 是一个目录，跳过文件监控`);
+      log('WATCHER', 'envPath 是目录，跳过', envPath);
       return;
     }
   } catch (e) {
-    console.log(`[WARN] 无法访问 ${envPath}，跳过文件监控`);
+    log('WATCHER', '无法访问 envPath，跳过', envPath, e.message);
     return;
   }
 
@@ -224,12 +278,13 @@ function setupWatcher(projectId, projectDir) {
   });
 
   watcher.on('change', () => {
+    log('WATCHER', 'env 变更 (change)', projectId);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
 
   watcher.on('error', (err) => {
-    console.error(`[WARN] 监控错误 ${projectDir}:`, err.message);
+    logErr('WATCHER', '监控错误', projectDir, err.message);
   });
 
   // 也监控目录中新增/删除 .env.xxx 文件
@@ -239,17 +294,19 @@ function setupWatcher(projectId, projectDir) {
   });
 
   dirWatcher.on('add', () => {
+    log('WATCHER', 'env 文件新增 (add)', projectId);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
 
   dirWatcher.on('unlink', () => {
+    log('WATCHER', 'env 文件删除 (unlink)', projectId);
     const info = getProjectInfo(projectDir);
     io.emit('env-changed', { projectId, ...info });
   });
 
   dirWatcher.on('error', (err) => {
-    console.error(`[WARN] 目录监控错误 ${projectDir}:`, err.message);
+    logErr('WATCHER', '目录监控错误', projectDir, err.message);
   });
 
   watchers.set(projectId, watcher);
@@ -259,12 +316,18 @@ function setupWatcher(projectId, projectDir) {
 
 // 启动 Express 服务器
 async function startServer() {
+  log('SERVER', '启动 Express 服务器 …');
   const expressApp = express();
   server = http.createServer(expressApp);
   io = new Server(server, { cors: { origin: '*' } });
 
   expressApp.use(cors());
   expressApp.use(express.json());
+  // 请求日志：记录每个 API / 静态请求，方便排查前后端通信
+  expressApp.use((req, res, next) => {
+    log('SERVER', req.method, req.url);
+    next();
+  });
 
   // 静态文件服务（前端构建产物：client/dist，对齐 easy-ops 的 client/dist 方案）
   const clientDist = path.join(__dirname, 'client', 'dist');
@@ -349,6 +412,7 @@ async function startServer() {
 
     // 设置文件监控
     setupWatcher(project.id, normalizedDir);
+    log('SERVER', '项目已添加', project.id, normalizedDir);
 
     const info = getProjectInfo(normalizedDir);
     res.json({
@@ -424,6 +488,7 @@ async function startServer() {
 
       const info = getProjectInfo(project.dir);
       io.emit('env-changed', { projectId: project.id, ...info });
+      log('SERVER', '环境切换成功', project.id, '->', envFileName);
       res.json({
         success: true,
         projectId: project.id,
@@ -432,6 +497,7 @@ async function startServer() {
         envFiles: info.envFiles
       });
     } catch (e) {
+      logErr('SERVER', '环境切换失败', project.id, envFileName, e.message);
       res.status(500).json({ error: '切换失败: ' + e.message });
     }
   });
@@ -452,9 +518,9 @@ async function startServer() {
 
   // Socket.IO 连接处理
   io.on('connection', (socket) => {
-    console.log('Client connected');
+    log('SOCKET', 'Client connected');
     socket.on('disconnect', () => {
-      console.log('Client disconnected');
+      log('SOCKET', 'Client disconnected');
     });
   });
 
@@ -475,7 +541,7 @@ async function startServer() {
       // listen(0) 之后从 server.address() 取回操作系统实际分配的端口
       const addr = server.address();
       const port = addr ? addr.port : 0;
-      console.log(`Server running on http://127.0.0.1:${port} (系统分配端口)`);
+      log('SERVER', 'Server running on http://127.0.0.1:' + port + ' (系统分配端口)');
       resolve(port);
     }).on('error', (err) => {
       reject(err);
@@ -485,6 +551,7 @@ async function startServer() {
 
 // 创建主窗口
 async function createWindow() {
+  log('MAIN', '创建主窗口 …');
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -506,7 +573,9 @@ async function createWindow() {
   const port = await startServer();
 
   // 加载前端页面
-  mainWindow.loadURL(`http://127.0.0.1:${port}`);
+  const startUrl = `http://127.0.0.1:${port}`;
+  log('MAIN', '加载前端', startUrl);
+  mainWindow.loadURL(startUrl);
 
   // 开发模式下打开开发者工具
   if (process.env.NODE_ENV === 'development') {
@@ -524,7 +593,7 @@ function initAutoUpdater() {
   updaterInitialized = true;
 
   // 无论是否打包，先注册 app:get-info，供前端展示当前版本号
-  ipcMain.handle('app:get-info', () => ({ version: app.getVersion() }));
+  ipcMain.handle('app:get-info', () => { log('IPC', 'get-info'); return { version: app.getVersion() }; });
 
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
   if (!app.isPackaged) {
@@ -638,8 +707,10 @@ function initAutoUpdater() {
       return;
     }
     isDownloading = true;
+    log('UPDATE', 'download-update 开始');
     try {
       await autoUpdater.downloadUpdate();
+      log('UPDATE', 'download-update 完成');
     } catch (e) {
       console.error('[UPDATE] downloadUpdate 失败:', e.message);
       send({ type: 'error', message: e.message });
@@ -650,6 +721,7 @@ function initAutoUpdater() {
 
   // IPC：退出并安装更新
   ipcMain.handle('app:start-update', () => {
+    log('UPDATE', 'start-update 开始 (quitAndInstall)');
     try {
       // quitAndInstall(isSilent, isForceRunAfter) -> 先退出再强制安装并重启
       autoUpdater.quitAndInstall(false, true);
@@ -663,13 +735,16 @@ function initAutoUpdater() {
 // 单实例锁（参考 easy-ops「防止串台」）：保证同一时间只有一个 EnvSwitch 在运行，
 // 第二个启动实例会聚焦已有窗口，而不是再起一个后端/窗口与之争抢资源。
 const gotTheLock = app.requestSingleInstanceLock();
+log('MAIN', 'requestSingleInstanceLock ->', gotTheLock ? '主实例' : '次实例(将退出)');
 
 if (!gotTheLock) {
   // 没拿到锁说明已有实例在运行，当前（第二个）实例直接退出
+  log('MAIN', '已有实例在运行，当前实例退出');
   app.quit();
 } else {
   // 第二个实例尝试启动时：只聚焦已有窗口，不重复创建
   app.on('second-instance', () => {
+    log('MAIN', 'second-instance：聚焦已有窗口');
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
@@ -679,6 +754,8 @@ if (!gotTheLock) {
 
   // 当 Electron 准备好时创建窗口
   app.whenReady().then(() => {
+    log('MAIN', '=== EnvSwitch 启动 (isPackaged=' + app.isPackaged + ') ===')
+    log('MAIN', 'app ready，创建窗口');
     createWindow();
 
     // 窗口建好后再初始化自动更新（事件转发依赖 mainWindow）
@@ -686,6 +763,7 @@ if (!gotTheLock) {
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
+        log('MAIN', 'activate：重建窗口');
         createWindow();
       }
     });
@@ -694,6 +772,7 @@ if (!gotTheLock) {
 
 // 当所有窗口关闭时退出应用
 app.on('window-all-closed', () => {
+  log('MAIN', '所有窗口关闭');
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -701,6 +780,7 @@ app.on('window-all-closed', () => {
 
 // 应用退出时清理
 app.on('before-quit', () => {
+  log('MAIN', 'before-quit：关闭 server 与 watchers');
   if (server) {
     server.close();
   }
