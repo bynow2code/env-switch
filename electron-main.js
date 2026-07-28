@@ -596,17 +596,23 @@ function initAutoUpdater() {
     message: (err && err.message) || String(err)
   }));
 
-  // IPC：检查更新（带防重入）
+  // IPC：检查更新（带防重入 + 超时兜底）
+  // 问题背景：国内网络访问 GitHub（api.github.com / Releases）常不通或挂起，
+  // electron-updater 的 checkForUpdates() 无响应时既不 resolve 也不 reject，
+  // 前端会永远停在「正在检查更新…」。用 Promise.race 加 20s 超时，超时即报 error 事件。
   ipcMain.handle('app:check-updates', async () => {
     if (isChecking) {
       console.log('[UPDATE] checkForUpdates 忽略 - 正在检查中');
       return;
     }
     isChecking = true;
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('检查更新超时（可能网络无法访问 GitHub，请检查网络或代理）')), 20000)
+    );
     try {
-      await autoUpdater.checkForUpdates();
+      await Promise.race([autoUpdater.checkForUpdates(), timeout]);
     } catch (e) {
-      console.error('[UPDATE] checkForUpdates 失败:', e.message);
+      console.error('[UPDATE] checkForUpdates 失败/超时:', e.message);
       send({ type: 'error', message: e.message });
     } finally {
       isChecking = false;

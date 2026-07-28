@@ -67,7 +67,7 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
         <div className="env-values">
           <div className="env-item">
             <span className="env-key">APP_NAME</span>
-            <span className="env-value">{project.appName || <em>未设置</em>}</span>
+            <span className="env-value env-badge app">{project.appName || <em>未设置</em>}</span>
           </div>
           <div className="env-item">
             <span className="env-key">APP_ENV</span>
@@ -345,7 +345,7 @@ function App() {
       <header className="app-header">
         <h1>EnvSwitch</h1>
         <span className="subtitle">ENV 配置管理工具</span>
-        <button className="btn-update" onClick={handleCheckUpdates} title="检查更新">
+        <button className="btn-update" onClick={handleCheckUpdates} title="检查更新" disabled={updateState === 'checking'}>
           {updateState === 'downloaded' ? '更新可用' : '检查更新'}
         </button>
         {updateState === 'downloaded' && <span className="update-badge">!</span>}

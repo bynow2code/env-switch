@@ -454,6 +454,12 @@ body {
   color: #4f46e5;
 }
 
+/* APP_NAME 徽标：自由文本无环境语义，使用中性灰蓝样式，与 APP_ENV 视觉统一 */
+.env-badge.app {
+  background: #f1f5f9;
+  color: #475569;
+}
+
 /* Env Files */
 .env-files {
   border-top: 1px solid #f3f4f6;
