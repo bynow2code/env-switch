@@ -38,6 +38,7 @@
     },
     "files": [
       "electron-main.js",
+      "preload.js",
       "client/dist/**/*",
       "package.json"
     ],
