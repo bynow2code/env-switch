@@ -131,6 +131,35 @@ body {
   margin-bottom: 4px;
 }
 
+/* 更新排查日志面板（可见事件流，方便定位卡在哪一步） */
+.update-log {
+  margin-top: 14px;
+  border-top: 1px solid #f3f4f6;
+  padding-top: 10px;
+}
+
+.update-log-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  margin-bottom: 6px;
+  letter-spacing: 0.03em;
+}
+
+.update-log-empty {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.update-log-line {
+  font-size: 12px;
+  color: #374151;
+  font-family: 'Consolas', 'Monaco', monospace;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .update-progress-bar {
   width: 100%;
   height: 10px;

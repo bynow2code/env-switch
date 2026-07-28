@@ -567,34 +567,40 @@ function initAutoUpdater() {
     owner: 'bynow2code',
     repo: 'env-switch'
   });
+  console.log('[UPDATE] feedURL 已设置: provider=github, owner=bynow2code, repo=env-switch');
 
   // 统一的事件转发：主进程 autoUpdater 事件 -> 渲染进程（update-event 通道）
   const send = (payload) => {
     if (mainWindow) mainWindow.webContents.send('update-event', payload);
   };
 
-  autoUpdater.on('checking-for-update', () => send({ type: 'checking' }));
-  autoUpdater.on('update-available', (info) => send({
-    type: 'available',
-    version: info.version,
-    releaseNotes: info.releaseNotes || ''
-  }));
-  autoUpdater.on('update-not-available', (info) => send({
-    type: 'not-available',
-    version: info.version
-  }));
-  autoUpdater.on('download-progress', (p) => send({
-    type: 'downloading',
-    progress: Math.round(p.percent || 0)
-  }));
-  autoUpdater.on('update-downloaded', (info) => send({
-    type: 'downloaded',
-    version: info.version
-  }));
-  autoUpdater.on('error', (err) => send({
-    type: 'error',
-    message: (err && err.message) || String(err)
-  }));
+  // 每个 autoUpdater 事件都打日志（带 [UPDATE] 前缀，方便从终端/打包日志排查）
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[UPDATE] 事件: checking-for-update（开始连接更新源）');
+    send({ type: 'checking' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    console.log('[UPDATE] 事件: update-available, version =', info && info.version);
+    send({ type: 'available', version: info.version, releaseNotes: info.releaseNotes || '' });
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('[UPDATE] 事件: update-not-available, version =', info && info.version);
+    send({ type: 'not-available', version: info.version });
+  });
+  autoUpdater.on('download-progress', (p) => {
+    const percent = Math.round(p.percent || 0);
+    console.log('[UPDATE] 事件: download-progress', percent + '%');
+    send({ type: 'downloading', progress: percent });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[UPDATE] 事件: update-downloaded, version =', info && info.version);
+    send({ type: 'downloaded', version: info.version });
+  });
+  autoUpdater.on('error', (err) => {
+    const msg = (err && err.message) || String(err);
+    console.error('[UPDATE] 事件: error:', msg);
+    send({ type: 'error', message: msg });
+  });
 
   // IPC：检查更新（带防重入 + 超时兜底）
   // 问题背景：国内网络访问 GitHub（api.github.com / Releases）常不通或挂起，
@@ -606,16 +612,22 @@ function initAutoUpdater() {
       return;
     }
     isChecking = true;
+    console.log('[UPDATE] 开始 checkForUpdates() …（最多等待 20s）');
     const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('检查更新超时（可能网络无法访问 GitHub，请检查网络或代理）')), 20000)
+      setTimeout(() => {
+        console.warn('[UPDATE] 20s 超时触发：放弃等待 checkForUpdates（通常是网络连不上 GitHub）');
+        reject(new Error('检查更新超时（可能网络无法访问 GitHub，请检查网络或代理）'));
+      }, 20000)
     );
     try {
-      await Promise.race([autoUpdater.checkForUpdates(), timeout]);
+      const result = await Promise.race([autoUpdater.checkForUpdates(), timeout]);
+      console.log('[UPDATE] checkForUpdates 正常返回:', result ? '有结果（见后续事件）' : result);
     } catch (e) {
       console.error('[UPDATE] checkForUpdates 失败/超时:', e.message);
       send({ type: 'error', message: e.message });
     } finally {
       isChecking = false;
+      console.log('[UPDATE] checkForUpdates 流程结束 (isChecking=false)');
     }
   });
 
