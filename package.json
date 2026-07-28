@@ -8,10 +8,11 @@
     "server": "node server/index.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "electron-dev": "npm run build && electron .",
-    "electron-build": "npm run build && electron-builder --win --x64",
-    "electron-build-dir": "npm run build && electron-builder --dir --win",
-    "electron-build-mac": "npm run build && electron-builder --mac --x64 --arm64",
+    "gen-icons": "node gen-icons.js",
+    "electron-dev": "node gen-icons.js && npm run build && electron .",
+    "electron-build": "node gen-icons.js && npm run build && electron-builder --win --x64",
+    "electron-build-dir": "node gen-icons.js && npm run build && electron-builder --dir --win",
+    "electron-build-mac": "node gen-icons.js && npm run build && electron-builder --mac --x64 --arm64",
     "start": "electron ."
   },
   "dependencies": {
