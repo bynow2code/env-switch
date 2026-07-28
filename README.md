@@ -87,54 +87,6 @@ EnvSwitch 把这些 `.env` 集中管起来：
 | macOS（Apple Silicon） | ✅ | `.dmg` / `.zip` |
 | Linux | 🔧 | 未提供对应包体 |
 
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 桌面框架 | Electron |
-| 后端 | Express + Socket.IO（运行于主进程内） |
-| 前端 | React + Vite |
-| 拖拽 | @dnd-kit |
-| 文件监控 | chokidar |
-| 打包 | electron-builder (NSIS / dmg) |
-| 自动更新 | electron-updater (GitHub Releases) |
-
-## 项目结构
-
-```
-EnvSwitch/
-├── electron-main.js      # Electron 主进程（Express 服务端 + 自动更新 + 单实例锁 + 系统分配端口）
-├── preload.js            # 预加载脚本（向渲染进程安全暴露 electronAPI）
-├── server/
-│   └── index.js          # Express 服务端（独立运行时的入口；打包后由主进程内联）
-├── client/               # React 前端
-│   ├── src/
-│   │   ├── App.jsx       # 主组件（含更新 UI 状态机）
-│   │   ├── App.css       # 样式
-│   │   └── main.jsx      # 入口
-│   └── public/
-│       ├── favicon.svg
-│       ├── logo-1024.png   # 默认图标（build.icon）
-│       ├── logo-win.png    # Windows 图标（build.win.icon + 运行时窗口图标）
-│       └── logo-mac.png    # macOS 图标（build.mac.icon）
-├── gen-icons.js          # 图标生成脚本（从 favicon.svg 渲染 3 张 PNG）
-└── package.json
-```
-
-> 注意：`public/` 是 Vite 构建输出目录（被 `.gitignore` 忽略），由 `npm run build` 从 `client/public` 拷贝生成，无需手动维护。
-
-## API 接口
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/projects` | 获取所有项目列表 |
-| GET | `/api/projects/:id` | 获取单个项目详情 |
-| POST | `/api/projects` | 添加项目（body: `{ dir }`） |
-| PUT | `/api/projects/reorder` | 更新排序（body: `{ ids }`） |
-| DELETE | `/api/projects/:id` | 删除项目 |
-| POST | `/api/projects/:id/switch` | 切换环境（body: `{ envFileName }`） |
-| GET | `/api/projects/:id/env-file/:fileName` | 获取指定 env 文件内容 |
-
 ## 常见问题
 
 **Q：数据存在哪？**

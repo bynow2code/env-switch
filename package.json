@@ -25,6 +25,7 @@
     "concurrently": "^8.2.2",
     "electron": "^43.2.0",
     "electron-builder": "^26.0.0",
+    "png-to-ico": "^3.0.1",
     "sharp": "^0.35.0"
   },
   "build": {
@@ -48,7 +49,8 @@
           ]
         }
       ],
-      "icon": "client/public/logo-win.png"
+      "icon": "client/public/logo.ico",
+      "artifactName": "EnvSwitch-${version}-Setup.${ext}"
     },
     "mac": {
       "target": [
@@ -62,7 +64,9 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "client/public/logo.ico",
+      "uninstallerIcon": "client/public/logo.ico"
     }
   }
 }
