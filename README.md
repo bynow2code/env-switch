@@ -33,6 +33,7 @@ EnvSwitch 把这些 `.env` 集中管起来：
 | 🖥️ **桌面应用** | Electron 打包，Windows / macOS 独立运行，无需常开终端 |
 | 🔄 **自动更新** | 打包版本可检查 GitHub Release 上的新版本，更新日志按 Release 风格展示 |
 | 🔒 **系统分配端口** | 后端监听 `0` 号端口由系统分配，配合单实例锁，避免多实例串台 |
+| ℹ️ **应用信息** | 头部「App info」图标按钮打开关于弹窗，展示版本、运行模式、数据/日志路径与源码地址 |
 
 ## 怎么用
 
@@ -77,6 +78,13 @@ EnvSwitch 把这些 `.env` 集中管起来：
 
 - 窗口头部「检查更新」按钮可手动触发版本检查，发现新版本会弹窗提示下载安装。
 - 仅**打包版本**会真正连接 GitHub Releases；开发模式（未打包）下检查会提示 "Running in dev mode"，不会联网。
+- 平台差异：Windows 走 electron-updater（NSIS 流程，未签名可用）；macOS 因个人发布无 Apple 签名，采用**自研更新器**——直接下载 GitHub Release 的 zip、`ditto` 解压、后台脚本替换 `.app` 并去除 quarantine 标记，从而无需签名即可完成更新（绕开 electron-updater 在 macOS 上对运行 App 代码签名的强制校验，避免出现 `Could not get code signature for running application` 报错）。
+
+### 6. 查看应用信息（App Info）
+
+- 窗口头部「App info」图标按钮打开关于弹窗。
+- 可查看：当前版本号、运行模式（Development / Production）、数据文件与日志文件的完整路径（带 Copy 按钮方便复制），以及源码仓库链接。
+- 点击「Source」的 GitHub 链接会在系统默认浏览器中打开；排查问题时，路径与版本信息可直接定位数据目录与日志目录。
 
 ## 支持平台
 

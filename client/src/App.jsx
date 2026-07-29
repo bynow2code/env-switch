@@ -67,8 +67,7 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
         <div className="env-values">
           <div className="env-item">
             <span className="env-key">APP_NAME</span>
-            {/* APP_NAME 是自由文本、无环境语义，走基础 .env-badge 的中性灰底（与未识别的 APP_ENV 一致） */}
-            <span className="env-value env-badge">{project.appName || <em>未设置</em>}</span>
+            <span className="env-value env-badge app">{project.appName || <em>未设置</em>}</span>
           </div>
           <div className="env-item">
             <span className="env-key">APP_ENV</span>
@@ -122,14 +121,21 @@ function App() {
 
   // 自动更新相关状态
   const [appVersion, setAppVersion] = useState('')          // 当前版本号
+  const [appInfo, setAppInfo] = useState(null)              // App Info 完整信息（关于弹窗展示）
+  const [showInfoModal, setShowInfoModal] = useState(false) // 关于弹窗显隐
   const [showUpdateModal, setShowUpdateModal] = useState(false)
   // updateState: idle | checking | available | not-available | downloading | downloaded | error
   const [updateState, setUpdateState] = useState('idle')
   const [updateInfo, setUpdateInfo] = useState({ version: '', releaseNotes: '' })
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateError, setUpdateError] = useState('')
-  // 「关于」弹窗
-  const [showAboutModal, setShowAboutModal] = useState(false)
+
+  // 复制文本到剪贴板（App Info 弹窗里 Copy 按钮用），失败静默处理
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => {})
+    }
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -178,10 +184,13 @@ function App() {
     const api = window.electronAPI
     if (!api) return
 
-    // 获取当前版本（用于弹窗里显示「已是最新版本 vX.Y.Z」）
+    // 获取应用信息（版本号 + 关于弹窗展示的环境/路径信息）
     if (api.getAppInfo) {
       api.getAppInfo()
-        .then(info => { if (info && info.version) setAppVersion(info.version) })
+        .then(info => {
+          if (info && info.version) setAppVersion(info.version)
+          if (info) setAppInfo(info)
+        })
         .catch(() => {})
     }
 
@@ -234,9 +243,6 @@ function App() {
         setUpdateState('error')
         setUpdateError('Running in dev mode. Auto-update only works in packaged builds.')
       })
-    } else {
-      setUpdateState('error')
-      setUpdateError('electronAPI.checkForUpdates 不存在（preload 未暴露？）')
     }
   }
 
@@ -365,18 +371,13 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="app-header-spacer" />
-        <button
-          className="btn-icon"
-          onClick={() => setShowAboutModal(true)}
-          title="关于 EnvSwitch"
-          aria-label="关于 EnvSwitch"
-        >
-          {/* 圆形信息图标 ⓘ，与右侧两个按钮同高（36px）、同色系（紫蓝），强化视觉统一 */}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
-            <line x1="12" y1="11" x2="12" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            <circle cx="12" cy="7.5" r="1.2" fill="currentColor" />
+        <h1>EnvSwitch</h1>
+        <span className="subtitle">ENV 配置管理工具</span>
+        <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
         </button>
         <button className="btn-update" onClick={handleCheckUpdates} title="检查更新" disabled={updateState === 'checking'}>
@@ -453,13 +454,7 @@ function App() {
                 <div>
                   <p>发现新版本 <strong>v{updateInfo.version}</strong>。</p>
                   {updateInfo.releaseNotes && (
-                    // releaseNotes 是 GitHub 提供的 HTML 字符串（含 <p> <strong> <a> 等标签），
-                    // 这里用 dangerouslySetInnerHTML 渲染为真实 HTML。
-                    // 来源是项目作者自己 GitHub 仓库的 release notes，可信源，个人工具可接受。
-                    <div
-                      className="update-notes"
-                      dangerouslySetInnerHTML={{ __html: updateInfo.releaseNotes }}
-                    />
+                    <pre className="update-notes">{typeof updateInfo.releaseNotes === 'string' ? updateInfo.releaseNotes : JSON.stringify(updateInfo.releaseNotes)}</pre>
                   )}
                   <p className="update-hint">是否下载并安装此更新？</p>
                 </div>
@@ -504,41 +499,48 @@ function App() {
         </div>
       )}
 
-      {showAboutModal && (
+      {showInfoModal && (
         <div className="dialog-overlay">
-          <div className="dialog about-dialog" onClick={e => e.stopPropagation()}>
-            <h2>关于 EnvSwitch</h2>
-            <div className="about-body">
-              <div className="about-row">
-                <span className="about-key">应用名称</span>
-                <span className="about-value">EnvSwitch</span>
+          <div className="dialog info-dialog" onClick={e => e.stopPropagation()}>
+            <h2>App Info</h2>
+            <div className="info-body">
+              <div className="info-row">
+                <label>Version</label>
+                <div className="info-value">v{appInfo?.version || appVersion}</div>
               </div>
-              <div className="about-row">
-                <span className="about-key">当前版本</span>
-                <span className="about-value">v{appVersion || '—'}</span>
+              <div className="info-row">
+                <label>Mode</label>
+                <div className="info-value">{appInfo?.isDev ? 'Development' : 'Production'}</div>
               </div>
-              <div className="about-row">
-                <span className="about-key">功能简介</span>
-                <span className="about-value">.env 多环境配置一键切换</span>
-              </div>
-              <div className="about-row">
-                <span className="about-key">项目仓库</span>
-                <button
-                  type="button"
-                  className="about-link"
-                  onClick={() => {
-                    const api = window.electronAPI
-                    if (api && api.openExternal) {
-                      api.openExternal('https://github.com/bynow2code/env-switch')
-                    }
-                  }}
-                >
-                  github.com/bynow2code/env-switch
-                </button>
-              </div>
+              {appInfo?.dataFilePath && (
+                <div className="info-row">
+                  <label>Data File</label>
+                  <div className="info-path">
+                    <span className="info-path-text">{appInfo.dataFilePath}</span>
+                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.dataFilePath)}>Copy</button>
+                  </div>
+                </div>
+              )}
+              {appInfo?.logFilePath && (
+                <div className="info-row">
+                  <label>Log File</label>
+                  <div className="info-path">
+                    <span className="info-path-text">{appInfo.logFilePath}</span>
+                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.logFilePath)}>Copy</button>
+                  </div>
+                </div>
+              )}
+              {appInfo?.repoUrl && (
+                <div className="info-row">
+                  <label>Source</label>
+                  <div className="info-value">
+                    <a className="info-link" href={appInfo.repoUrl} target="_blank" rel="noreferrer">GitHub</a>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="dialog-actions">
-              <button className="btn-cancel" onClick={() => setShowAboutModal(false)}>关闭</button>
+              <button className="btn-cancel" onClick={() => setShowInfoModal(false)}>Close</button>
             </div>
           </div>
         </div>

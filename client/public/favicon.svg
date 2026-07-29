@@ -1,13 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <!-- 圆角矩形背景：缩小到约 76%（60px 边距），四周留充足透明边距 —— 与 EasyOps logo.svg 保持一致。
-       目的：OS（dock/taskbar/开始菜单）显示时会自动在图标周围叠加视觉边距，
-       如果 SVG 自己就贴边，叠加后整体被「挤小」，看起来比 EasyOps 小一圈。
-       留出 12% 透明边距后，OS 的视觉边距落在我们预留的透明区里，最终显示尺寸正常。
-       圆角半径 rx=80（约 16%），与 EasyOps 的 rx≈15.6% 对齐，保持视觉一致。 -->
-  <rect x="60" y="60" width="392" height="392" rx="80" ry="80" fill="#1E1E1E"/>
-
-  <!-- Env 文字：font-size=200 让文字在 392 宽矩形里撑得比较满（3 字符 monospace 总宽 ≈ 360，
-       两侧各留 ~16px 呼吸空间）；y=318 依据 Consolas monospace 大致度量（ascent 0.83 / descent 0.21）
-       让文字视觉中心落在矩形中心 y=256 上，与 EasyOps "SH" 居中算法一致。 -->
-  <text x="256" y="318" font-family="Consolas, 'Courier New', monospace" font-size="200" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Env</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- 背景圆角矩形 - 内缩到约 76%，四周留充足透明边距（与 easy-ops 图标对齐） -->
+  <rect x="30" y="30" width="196" height="196" rx="40" fill="#1E1E2E"/>
+  <!-- Env 文字：字体栈与 easy-ops 一致（系统无衬线，非等宽代码字体），字重 800、收紧字距 -->
+  <text x="128" y="160" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="88" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
 </svg>

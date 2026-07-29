@@ -13,6 +13,11 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
+// 请求日志（对齐 easy-ops：每个 API 请求都打点 method + url）
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 // 获取应用根目录（兼容开发模式和 pkg 打包）
 // pkg 打包时 process.execPath 指向 exe；开发时使用 __dirname
@@ -22,6 +27,45 @@ const ROOT_DIR = process.pkg ? APP_DIR : path.join(__dirname, '..');
 const DATA_DIR = path.join(APP_DIR, 'server');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const watchers = new Map(); // projectId -> chokidar watcher
+
+// ===== 日志策略（对齐 easy-ops：信息日志同时输出到终端 + 写入 server/logs/server.log）=====
+const IS_DEV = !process.pkg
+const SERVER_LOG_DIR = path.join(APP_DIR, 'logs')
+
+function appendServerLog(line) {
+  try {
+    if (!fs.existsSync(SERVER_LOG_DIR)) fs.mkdirSync(SERVER_LOG_DIR, { recursive: true })
+    fs.appendFileSync(path.join(SERVER_LOG_DIR, 'server.log'), `[${new Date().toISOString()}] ${line}\n`)
+  } catch (e) { /* 日志写入失败不阻塞主流程 */ }
+}
+
+const _origLog = console.log.bind(console)
+const _origErr = console.error.bind(console)
+const _origWarn = console.warn.bind(console)
+const fmtServerLog = (args) => args.map(a => {
+  if (typeof a === 'string') return a
+  if (a instanceof Error) return a.stack || a.message
+  try { return JSON.stringify(a) } catch (e) { return String(a) }
+}).join(' ')
+
+// 信息日志：终端 + server.log 双写（与 easy-ops 主进程 log() 行为一致，开发/打包均记录）
+function serverLog(message) {
+  _origLog(`[SERVER] ${message}`)
+  appendServerLog(message)
+}
+console.log = (...args) => serverLog(fmtServerLog(args))
+
+// 错误日志：dev 同时输出终端 + 文件；prod 仅写入日志文件
+console.error = (...args) => {
+  const msg = fmtServerLog(args)
+  if (IS_DEV) _origErr(...args)
+  appendServerLog('[ERROR] ' + msg)
+}
+console.warn = (...args) => {
+  const msg = fmtServerLog(args)
+  if (IS_DEV) _origWarn(...args)
+  appendServerLog('[WARN] ' + msg)
+}
 
 // 确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
@@ -178,18 +222,15 @@ function setupWatcher(projectId, projectDir) {
 
   // WSL 路径不支持 chokidar 监控，跳过
   if (isWslPath(projectDir)) {
-    console.log(`[INFO] WSL 路径 ${projectDir}，跳过文件监控`);
     return;
   }
 
   // 只监控文件，如果 .env 是目录则跳过
   try {
     if (fs.existsSync(envPath) && fs.statSync(envPath).isDirectory()) {
-      console.log(`[WARN] ${envPath} 是一个目录，跳过文件监控`);
       return;
     }
   } catch (e) {
-    console.log(`[WARN] 无法访问 ${envPath}，跳过文件监控`);
     return;
   }
 
@@ -315,6 +356,7 @@ app.post('/api/projects', (req, res) => {
 
   // 设置文件监控
   setupWatcher(project.id, normalizedDir);
+  console.log(`项目已添加 ${project.id} ${normalizedDir}`);
 
   const info = getProjectInfo(normalizedDir);
   res.json({
@@ -417,6 +459,7 @@ app.post('/api/projects/:id/switch', (req, res) => {
 
     const info = getProjectInfo(project.dir);
     io.emit('env-changed', { projectId: project.id, ...info });
+    console.log(`环境切换成功 ${project.id} -> ${envFileName}`);
     res.json({
       success: true,
       projectId: project.id,
@@ -492,10 +535,8 @@ server.on('error', (err) => {
           execSync(`taskkill /F /PID ${pid} 2>nul || true`, { stdio: 'pipe' });
         } catch (e) {}
       });
-      console.log('已关闭旧进程，3秒后重试...');
       setTimeout(() => {
         server.listen(PORT, () => {
-          console.log(`EnvSwitch server running on http://localhost:${PORT}`);
         });
       }, 3000);
     } catch (e) {
@@ -509,5 +550,5 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`EnvSwitch server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://127.0.0.1:${PORT}`);
 });
