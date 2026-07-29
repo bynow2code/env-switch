@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -40,12 +40,46 @@ function log(message) {
 // 错误日志便捷方法：带模块前缀（如 [FATAL]/[SERVER]），最终同样走 log() 的双写通道
 function logErr(tag, ...args) { log(`[${tag}] ${fmtLog(args)}`) }
 
-// 未捕获异常 / 未处理拒绝：写入日志（开发/打包均可见），避免静默崩溃
+// 崩溃兜底（对齐 easy-ops 的 showFatal 机制）：未捕获异常 / 未处理拒绝时，
+// 既写日志（[FATAL]）又弹系统错误框，让用户看到崩溃原因而非静默闪退。
+
+// 致命错误统一处理：写日志 + 弹系统错误框，弹窗内附带日志路径方便用户自查。
+// 使用 function 声明（而非 const 箭头）以获得 hoisting，确保早期异常回调也能安全调用，
+// 避免 TDZ 导致「Cannot access 'showFatal' before initialization」崩溃（与 log() 同理）。
+function showFatal(title, detail) {
+  logErr('FATAL', `${title}: ${detail}`)
+  let logPathHint = ''
+  try {
+    // 日志实际落在 REAL_USER_DATA 下（dev 模式 userData 被重定向到临时目录，日志不受影响）
+    logPathHint = `\n\n日志已保存，可查看详情：\n${path.join(REAL_USER_DATA, 'logs', 'main.log')}`
+  } catch (e) {
+    logPathHint = '\n\n（无法定位日志目录，请检查应用数据目录下的 logs/main.log）'
+  }
+  try {
+    dialog.showErrorBox(`EnvSwitch 启动失败 - ${title}`, `${detail}${logPathHint}`)
+  } catch (e) {}
+}
+
+// 判断是否为「更新器专属」错误：这类错误已在更新弹窗（update modal）中向用户展示，
+// 此处过滤掉，避免 unhandledRejection 又弹一次致命错误框造成重复打扰。
+// 关键约束（对齐 easy-ops）：正则只匹配「更新器特有的、具体」的签名，
+// 绝不能匹配 update / release 这类泛词——否则 "failed to update cache"、
+// "release the port" 等普通崩溃也会被误吞，真实闪退被静默掩盖，反而更难排查。
+function isUpdateRelatedError(reason) {
+  const msg = (reason && reason.message) || String(reason)
+  return /Cannot download|net::|ERR_UPDATER|Update check failed|electron-updater|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|status\s*\d{3}/i.test(msg)
+}
+
 process.on('uncaughtException', (err) => {
-  logErr('FATAL', 'uncaughtException:', err && err.stack || err)
+  showFatal('Uncaught Exception', err && err.stack ? err.stack : String(err))
 })
 process.on('unhandledRejection', (reason) => {
-  logErr('FATAL', 'unhandledRejection:', reason)
+  // 更新类 rejection 已被更新弹窗覆盖，只记日志不弹窗，避免重复打扰
+  if (isUpdateRelatedError(reason)) {
+    logErr('UPDATE-REJECTION', reason)
+    return
+  }
+  showFatal('Unhandled Promise Rejection', reason && reason.stack ? reason.stack : String(reason))
 })
 
 // 开发模式：将 Chromium 缓存（HTTP 磁盘缓存 + GPU 缓存）重定向到用户临时目录下可写目录，
