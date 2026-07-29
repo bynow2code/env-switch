@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 获取应用信息（版本号等）：对应主进程 app:get-info
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
 
+  // 用系统默认浏览器打开外部链接：对应主进程 app:open-external
+  // 渲染端不要把 <a> 直接交给 Electron 打开（会在新窗口开），而是通过这里走 shell.openExternal
+  openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
+
   // 订阅更新事件（checking/available/not-available/downloading/downloaded/error）
   // 返回一个取消订阅函数，供 React 在卸载时清理
   onUpdateEvent: (callback) => {

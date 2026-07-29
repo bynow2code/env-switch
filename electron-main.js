@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -83,6 +83,14 @@ const watchers = new Map();
 let updaterInitialized = false; // 防止 ipcMain.handle 重复注册（mac 重新激活窗口时会再次进入）
 let isChecking = false;        // 防重入：正在检查更新
 let isDownloading = false;     // 防重入：正在下载更新
+
+// 已知更新生命周期状态：用于「重查时不再重复 checkForUpdates()」，
+// 否则下载进行中重查会触发 electron-updater 误报 update-not-available（mac 上表现为「已是最新」）。
+let hasUpdate = false;          // 已知有可用更新（update-available 已触发且未取消）
+let isUpdateDownloaded = false; // 更新已下载完成（等待退出安装）
+let lastProgress = 0;           // 最近一次下载进度（%）
+let availableVersion = '';      // 已知可用更新的版本号
+let availableReleaseNotes = ''; // 已知可用更新的 release notes（HTML 字符串）
 
 // 获取应用数据目录（固定返回真实的 userData，不受上方开发模式重定向影响）
 const getAppDataPath = () => {
@@ -595,6 +603,19 @@ function initAutoUpdater() {
   // 无论是否打包，先注册 app:get-info，供前端展示当前版本号
   ipcMain.handle('app:get-info', () => { log('IPC', 'get-info'); return { version: app.getVersion() }; });
 
+  // 用系统默认浏览器打开外部链接（如「关于」弹窗里的 GitHub 仓库地址）。
+  // 普通 <a target="_blank"> 在 Electron 里会在新 Electron 窗口打开，不是系统默认浏览器；
+  // 故拦截后走 shell.openExternal，由 OS 交给默认浏览器。需以 http(s):// 开头以防误用。
+  ipcMain.handle('app:open-external', (event, url) => {
+    log('IPC', 'open-external', url);
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      console.warn('[IPC] open-external 拒绝非 http(s) 链接:', url);
+      return false;
+    }
+    shell.openExternal(url).catch(e => console.error('[IPC] open-external 失败:', e.message));
+    return true;
+  });
+
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
   if (!app.isPackaged) {
     console.log('[UPDATE] 开发模式：跳过真实更新检查（打包后才会真正连 GitHub）');
@@ -650,19 +671,33 @@ function initAutoUpdater() {
   });
   autoUpdater.on('update-available', (info) => {
     console.log('[UPDATE] 事件: update-available, version =', info && info.version);
+    // 记录已知更新，供后续「重查」时直接重发状态，避免重复 checkForUpdates() 误报
+    hasUpdate = true;
+    isUpdateDownloaded = false;
+    availableVersion = (info && info.version) || '';
+    availableReleaseNotes = (info && info.releaseNotes) || '';
     send({ type: 'available', version: info.version, releaseNotes: info.releaseNotes || '' });
   });
   autoUpdater.on('update-not-available', (info) => {
     console.log('[UPDATE] 事件: update-not-available, version =', info && info.version);
+    // 确实没有更新：清掉已知状态（注意 error 事件不清除，避免下载失败后丢掉「有更新」记忆）
+    hasUpdate = false;
+    isUpdateDownloaded = false;
+    availableVersion = '';
+    availableReleaseNotes = '';
     send({ type: 'not-available', version: info.version });
   });
   autoUpdater.on('download-progress', (p) => {
     const percent = Math.round(p.percent || 0);
+    lastProgress = percent;
     console.log('[UPDATE] 事件: download-progress', percent + '%');
     send({ type: 'downloading', progress: percent });
   });
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[UPDATE] 事件: update-downloaded, version =', info && info.version);
+    isUpdateDownloaded = true;
+    hasUpdate = true;
+    if (info && info.version) availableVersion = info.version;
     send({ type: 'downloaded', version: info.version });
   });
   autoUpdater.on('error', (err) => {
@@ -675,7 +710,26 @@ function initAutoUpdater() {
   // 问题背景：国内网络访问 GitHub（api.github.com / Releases）常不通或挂起，
   // electron-updater 的 checkForUpdates() 无响应时既不 resolve 也不 reject，
   // 前端会永远停在「正在检查更新…」。用 Promise.race 加 20s 超时，超时即报 error 事件。
+  // 重查短路：若已知有更新（可用/下载中/已下载），直接按已知状态重发事件，不再调 checkForUpdates()。
+  // 否则下载进行中重查会触发 electron-updater 误报 update-not-available（mac 上表现为「已是最新版本」）。
   ipcMain.handle('app:check-updates', async () => {
+    // —— 短路分支：已经有已知更新，重发状态让前端回到正确界面 ——
+    if (isUpdateDownloaded) {
+      console.log('[UPDATE] 已知更新已下载，直接重发 downloaded（不再 checkForUpdates）');
+      send({ type: 'downloaded', version: availableVersion });
+      return;
+    }
+    if (isDownloading) {
+      console.log('[UPDATE] 已知正在下载，直接重发 downloading (' + lastProgress + '%)（不再 checkForUpdates）');
+      send({ type: 'downloading', progress: lastProgress });
+      return;
+    }
+    if (hasUpdate) {
+      console.log('[UPDATE] 已知有可用更新，直接重发 available v' + availableVersion + '（不再 checkForUpdates）');
+      send({ type: 'available', version: availableVersion, releaseNotes: availableReleaseNotes });
+      return;
+    }
+    // —— 正常分支：确实还不知道有没有更新，才真正去查 ——
     if (isChecking) {
       console.log('[UPDATE] checkForUpdates 忽略 - 正在检查中');
       return;

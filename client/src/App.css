@@ -12,9 +12,12 @@ body {
 }
 
 .app {
-  max-width: 900px;
-  margin: 0 auto;
+  /* 铺满整个窗口，不再居中留白（之前 max-width:900px + margin:0 auto 会在宽屏两侧留大量空白） */
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
   padding: 10px 16px 24px;
+  box-sizing: border-box;
 }
 
 /* Header */
@@ -27,51 +30,80 @@ body {
   border-bottom: 2px solid #e8ecf1;
 }
 
-.app-header h1 {
-  font-size: 18px;
-  font-weight: 700;
-  color: #4f46e5;
-  letter-spacing: -0.5px;
-}
-
-.app-header .subtitle {
-  font-size: 14px;
-  color: #6b7280;
+/* 弹性占位，把右侧按钮组推到右边（原来由 subtitle 占位） */
+.app-header-spacer {
   flex: 1;
 }
 
-.btn-add {
-  padding: 8px 16px;
-  background: #4f46e5;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
+/* 头部按钮统一规范：相同高度、相同圆角、相同字号字重、相同颜色，
+   仅在「填充/描边/纯图标」上做层级区分，强化一组按钮的视觉统一 */
+.btn-add,
+.btn-update,
+.btn-icon {
+  height: 36px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.18s, color 0.18s, border-color 0.18s, transform 0.06s;
+  font-family: inherit;
+  line-height: 1;
 }
 
-.btn-add:hover {
+.btn-add:active,
+.btn-update:active,
+.btn-icon:active {
+  transform: translateY(1px);
+}
+
+.btn-add:disabled,
+.btn-update:disabled,
+.btn-icon:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* + 添加项目：实心主按钮 */
+.btn-add {
+  padding: 0 18px;
+  background: #4f46e5;
+  color: #fff;
+  border: 1.5px solid #4f46e5;
+}
+.btn-add:hover:not(:disabled) {
   background: #4338ca;
+  border-color: #4338ca;
 }
 
-/* Update button (header) */
+/* 检查更新：描边次按钮，与主按钮同色但反相，hover 时反相填充 */
 .btn-update {
-  padding: 8px 16px;
+  padding: 0 18px;
   background: #fff;
   color: #4f46e5;
   border: 1.5px solid #4f46e5;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
 }
-
-.btn-update:hover {
+.btn-update:hover:not(:disabled) {
   background: #4f46e5;
   color: #fff;
+}
+
+/* 关于：纯图标方按钮，与右两个按钮同高 36px、同色、同圆角，对齐视觉语言 */
+.btn-icon {
+  width: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #4f46e5;
+  border: 1.5px solid #4f46e5;
+}
+.btn-icon:hover:not(:disabled) {
+  background: #4f46e5;
+  color: #fff;
+}
+.btn-icon svg {
+  display: block;
 }
 
 /* 有可用更新时的小红点提示 */
@@ -119,45 +151,62 @@ body {
   border-radius: 6px;
   padding: 10px 12px;
   margin: 8px 0;
-  font-size: 12px;
-  white-space: pre-wrap;
+  font-size: 13px;
   word-break: break-word;
+  /* 渲染的是 GitHub release notes 的 HTML，p/ul/li/a/strong 等要按正文样式排版，不要用等宽字体 */
+  line-height: 1.55;
+}
+
+/* release notes 内联 HTML 元素的样式（GitHub 风格：p/ul/li/a/strong/h1-h6/code 等） */
+.update-notes p {
+  margin: 0 0 6px 0;
+}
+.update-notes p:last-child {
+  margin-bottom: 0;
+}
+.update-notes ul,
+.update-notes ol {
+  margin: 0 0 6px 0;
+  padding-left: 20px;
+}
+.update-notes li {
+  margin: 2px 0;
+}
+.update-notes strong {
+  color: #1a1a2e;
+  font-weight: 600;
+}
+.update-notes a {
+  color: #4f46e5;
+  text-decoration: none;
+}
+.update-notes a:hover {
+  text-decoration: underline;
+}
+.update-notes h1,
+.update-notes h2,
+.update-notes h3,
+.update-notes h4,
+.update-notes h5,
+.update-notes h6 {
+  margin: 8px 0 4px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+.update-notes h1 { font-size: 16px; }
+.update-notes code {
+  background: #e5e7eb;
+  border-radius: 3px;
+  padding: 1px 4px;
   font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
 }
 
 .update-error-text {
   color: #ef4444;
   font-weight: 600;
   margin-bottom: 4px;
-}
-
-/* 更新排查日志面板（可见事件流，方便定位卡在哪一步） */
-.update-log {
-  margin-top: 14px;
-  border-top: 1px solid #f3f4f6;
-  padding-top: 10px;
-}
-
-.update-log-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #6b7280;
-  margin-bottom: 6px;
-  letter-spacing: 0.03em;
-}
-
-.update-log-empty {
-  font-size: 12px;
-  color: #9ca3af;
-}
-
-.update-log-line {
-  font-size: 12px;
-  color: #374151;
-  font-family: 'Consolas', 'Monaco', monospace;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .update-progress-bar {
@@ -174,6 +223,56 @@ body {
   background: #4f46e5;
   border-radius: 6px;
   transition: width 0.2s ease;
+}
+
+/* About modal */
+.about-dialog {
+  width: 400px;
+}
+
+.about-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.about-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.about-key {
+  flex-shrink: 0;
+  width: 70px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.about-value {
+  color: #1a1a2e;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.about-link {
+  /* 这是个 <button>，清掉按钮默认样式，让它在视觉上就是一条链接 */
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: #4f46e5;
+  text-decoration: none;
+  cursor: pointer;
+  word-break: break-all;
+  text-align: left;
+}
+
+.about-link:hover {
+  text-decoration: underline;
 }
 
 /* Loading */
@@ -422,7 +521,17 @@ body {
 .env-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* 显式 flex-start + 子元素 flex:0 0 auto：保证 key 和 value 紧挨在左侧，
+     避免卡片拉宽后 value 被某种 inherited/计算样式推到右端（出现中间一大段空白的现象）。
+     flex-wrap 兜底窄屏换行。 */
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.env-item > .env-key,
+.env-item > .env-value {
+  flex: 0 0 auto;
 }
 
 .env-key {
@@ -449,10 +558,14 @@ body {
 }
 
 .env-badge {
+  /* 基础徽标：中性灰底。所有 env 值（含未识别的 APP_ENV，如 pms-dev）默认都有背景，
+     不再出现「APP_NAME 有灰底、APP_ENV 透明」的不统一；识别到的标准环境再覆盖为语义色。 */
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 12px;
   font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .env-badge.local {
@@ -481,12 +594,6 @@ body {
 .env-badge.test {
   background: #e0e7ff;
   color: #4f46e5;
-}
-
-/* APP_NAME 徽标：自由文本无环境语义，使用中性灰蓝样式，与 APP_ENV 视觉统一 */
-.env-badge.app {
-  background: #f1f5f9;
-  color: #475569;
 }
 
 /* Env Files */

@@ -67,7 +67,8 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
         <div className="env-values">
           <div className="env-item">
             <span className="env-key">APP_NAME</span>
-            <span className="env-value env-badge app">{project.appName || <em>未设置</em>}</span>
+            {/* APP_NAME 是自由文本、无环境语义，走基础 .env-badge 的中性灰底（与未识别的 APP_ENV 一致） */}
+            <span className="env-value env-badge">{project.appName || <em>未设置</em>}</span>
           </div>
           <div className="env-item">
             <span className="env-key">APP_ENV</span>
@@ -127,12 +128,8 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState({ version: '', releaseNotes: '' })
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateError, setUpdateError] = useState('')
-  // 更新排查日志（事件流）：在弹窗内可见，无需开 DevTools 也能看卡在哪一步
-  const [updateLog, setUpdateLog] = useState([])
-  const pushUpdateLog = (type, msg) => {
-    const t = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    setUpdateLog(prev => [...prev, `[${t}] ${type}: ${msg}`].slice(-50)) // 最多保留最近 50 条
-  }
+  // 「关于」弹窗
+  const [showAboutModal, setShowAboutModal] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -196,32 +193,26 @@ function App() {
           case 'checking':
             setUpdateState('checking')
             setUpdateError('')
-            pushUpdateLog('checking', '开始检查更新')
             break
           case 'available':
             setUpdateState('available')
             setUpdateInfo({ version: data.version, releaseNotes: data.releaseNotes || '' })
-            pushUpdateLog('available', `发现新版本 v${data.version}`)
             break
           case 'not-available':
             setUpdateState('not-available')
-            pushUpdateLog('not-available', `已是最新 (v${data.version || appVersion})`)
             break
           case 'downloading':
             setUpdateState('downloading')
             setUpdateProgress(Math.min(data.progress || 0, 99))
-            pushUpdateLog('downloading', `下载中 ${data.progress || 0}%`)
             break
           case 'downloaded':
             setUpdateState('downloaded')
             setUpdateProgress(100)
             if (data.version) setUpdateInfo(prev => ({ ...prev, version: data.version }))
-            pushUpdateLog('downloaded', `下载完成 v${data.version || ''}`)
             break
           case 'error':
             setUpdateState('error')
             setUpdateError(data.message || '未知错误')
-            pushUpdateLog('error', `错误: ${data.message || '未知错误'}`)
             break
           default:
             break
@@ -236,18 +227,16 @@ function App() {
   const handleCheckUpdates = () => {
     setShowUpdateModal(true)
     setUpdateError('')
-    setUpdateLog([]) // 每次打开清空，保证日志对应本次检查会话
     if (updateState !== 'downloaded') setUpdateState('checking')
     const api = window.electronAPI
-    pushUpdateLog('invoke', '调用 checkForUpdates (ipc: app:check-updates)')
     if (api && api.checkForUpdates) {
       api.checkForUpdates().catch(() => {
         setUpdateState('error')
         setUpdateError('Running in dev mode. Auto-update only works in packaged builds.')
-        pushUpdateLog('error', 'dev mode / 调用被拒绝')
       })
     } else {
-      pushUpdateLog('error', 'electronAPI.checkForUpdates 不存在（preload 未暴露？）')
+      setUpdateState('error')
+      setUpdateError('electronAPI.checkForUpdates 不存在（preload 未暴露？）')
     }
   }
 
@@ -376,8 +365,20 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>EnvSwitch</h1>
-        <span className="subtitle">ENV 配置管理工具</span>
+        <div className="app-header-spacer" />
+        <button
+          className="btn-icon"
+          onClick={() => setShowAboutModal(true)}
+          title="关于 EnvSwitch"
+          aria-label="关于 EnvSwitch"
+        >
+          {/* 圆形信息图标 ⓘ，与右侧两个按钮同高（36px）、同色系（紫蓝），强化视觉统一 */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+            <line x1="12" y1="11" x2="12" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <circle cx="12" cy="7.5" r="1.2" fill="currentColor" />
+          </svg>
+        </button>
         <button className="btn-update" onClick={handleCheckUpdates} title="检查更新" disabled={updateState === 'checking'}>
           {updateState === 'downloaded' ? '更新可用' : '检查更新'}
         </button>
@@ -452,7 +453,13 @@ function App() {
                 <div>
                   <p>发现新版本 <strong>v{updateInfo.version}</strong>。</p>
                   {updateInfo.releaseNotes && (
-                    <pre className="update-notes">{typeof updateInfo.releaseNotes === 'string' ? updateInfo.releaseNotes : JSON.stringify(updateInfo.releaseNotes)}</pre>
+                    // releaseNotes 是 GitHub 提供的 HTML 字符串（含 <p> <strong> <a> 等标签），
+                    // 这里用 dangerouslySetInnerHTML 渲染为真实 HTML。
+                    // 来源是项目作者自己 GitHub 仓库的 release notes，可信源，个人工具可接受。
+                    <div
+                      className="update-notes"
+                      dangerouslySetInnerHTML={{ __html: updateInfo.releaseNotes }}
+                    />
                   )}
                   <p className="update-hint">是否下载并安装此更新？</p>
                 </div>
@@ -477,18 +484,6 @@ function App() {
                   <pre className="update-notes">{updateError}</pre>
                 </div>
               )}
-
-              {/* 更新排查日志：可见事件流，方便定位卡在哪一步 */}
-              <div className="update-log">
-                <div className="update-log-title">排查日志</div>
-                {updateLog.length === 0 ? (
-                  <div className="update-log-empty">（暂无日志，点击「检查更新」后这里会显示事件流）</div>
-                ) : (
-                  updateLog.map((line, i) => (
-                    <div key={i} className="update-log-line">{line}</div>
-                  ))
-                )}
-              </div>
             </div>
             <div className="dialog-actions">
               {updateState === 'downloaded' ? (
@@ -504,6 +499,46 @@ function App() {
               ) : (
                 <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>关闭</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAboutModal && (
+        <div className="dialog-overlay">
+          <div className="dialog about-dialog" onClick={e => e.stopPropagation()}>
+            <h2>关于 EnvSwitch</h2>
+            <div className="about-body">
+              <div className="about-row">
+                <span className="about-key">应用名称</span>
+                <span className="about-value">EnvSwitch</span>
+              </div>
+              <div className="about-row">
+                <span className="about-key">当前版本</span>
+                <span className="about-value">v{appVersion || '—'}</span>
+              </div>
+              <div className="about-row">
+                <span className="about-key">功能简介</span>
+                <span className="about-value">.env 多环境配置一键切换</span>
+              </div>
+              <div className="about-row">
+                <span className="about-key">项目仓库</span>
+                <button
+                  type="button"
+                  className="about-link"
+                  onClick={() => {
+                    const api = window.electronAPI
+                    if (api && api.openExternal) {
+                      api.openExternal('https://github.com/bynow2code/env-switch')
+                    }
+                  }}
+                >
+                  github.com/bynow2code/env-switch
+                </button>
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button className="btn-cancel" onClick={() => setShowAboutModal(false)}>关闭</button>
             </div>
           </div>
         </div>
