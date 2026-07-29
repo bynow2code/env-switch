@@ -18,8 +18,38 @@ import './App.css'
 
 const API_BASE = '/api'
 
+// 统一的剪贴板复制 helper（卡片路径按钮 + App Info 弹窗的 Copy 按钮共用）。
+// 优先用 navigator.clipboard（Electron 渲染进程 contextIsolation=true 下可用），
+// 失败降级到 textarea + execCommand——避免某些环境 clipboard API 受限时直接抛错中断点击。
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch (e) {
+    // 落到下面的降级方案
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.top = '-9999px'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch (e) {
+    return false
+  }
+}
+
 // 可拖拽的项目卡片
-function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
+function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) {
+  const [copied, setCopied] = useState(false)
   const {
     attributes,
     listeners,
@@ -41,7 +71,6 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
       <div className="project-header">
         <div className="project-info">
           <h3 className="project-name">{project.name}</h3>
-          <span className="project-dir" title={project.dir}>{project.dir}</span>
         </div>
         <div className="project-actions">
           <button
@@ -53,8 +82,22 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
             ⠿
           </button>
           <button
+            type="button"
+            className="project-dir-btn"
+            title={`项目路径：${project.dir}（点击复制）`}
+            onClick={async () => {
+              const ok = await copyText(project.dir)
+              if (ok) {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1200)
+              }
+            }}
+          >
+            {copied ? '已复制' : '路径'}
+          </button>
+          <button
             className="btn-delete"
-            onClick={() => onDelete(project.id)}
+            onClick={() => onRequestDelete(project.id, project.name)}
             title="删除项目"
           >
             删除
@@ -67,7 +110,7 @@ function SortableProjectCard({ project, onDelete, onSwitch, switching }) {
         <div className="env-values">
           <div className="env-item">
             <span className="env-key">APP_NAME</span>
-            <span className="env-value env-badge app">{project.appName || <em>未设置</em>}</span>
+            <span className="env-value env-badge">{project.appName || <em>未设置</em>}</span>
           </div>
           <div className="env-item">
             <span className="env-key">APP_ENV</span>
@@ -114,10 +157,10 @@ function App() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)  // 待删除项目 {id, name}，非 null 时显示二次确认弹窗
   const [newDir, setNewDir] = useState('')
   const [error, setError] = useState('')
   const [switching, setSwitching] = useState({})
-  const [socket, setSocket] = useState(null)
 
   // 自动更新相关状态
   const [appVersion, setAppVersion] = useState('')          // 当前版本号
@@ -129,13 +172,6 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState({ version: '', releaseNotes: '' })
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateError, setUpdateError] = useState('')
-
-  // 复制文本到剪贴板（App Info 弹窗里 Copy 按钮用），失败静默处理
-  const copyToClipboard = (text) => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).catch(() => {})
-    }
-  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -163,7 +199,6 @@ function App() {
 
   useEffect(() => {
     const s = io('/', { transports: ['websocket', 'polling'] })
-    setSocket(s)
 
     s.on('env-changed', (data) => {
       console.log('[WEB] 收到 env-changed', data.projectId, 'appName=', data.appName, 'appEnv=', data.appEnv)
@@ -297,6 +332,18 @@ function App() {
     }
   }
 
+  // 添加项目：调起系统文件夹选择器，把选中的目录路径填进输入框
+  const handleBrowse = async () => {
+    try {
+      if (window.electronAPI?.selectFolder) {
+        const dir = await window.electronAPI.selectFolder()
+        if (dir) setNewDir(dir)
+      }
+    } catch (e) {
+      console.error('[WEB] 选择文件夹失败', e)
+    }
+  }
+
   const deleteProject = async (id) => {
     console.log('[WEB] 删除项目', id)
     try {
@@ -310,6 +357,13 @@ function App() {
     } catch (e) {
       console.error('[WEB] 删除失败:', e)
     }
+  }
+
+  // 删除二次确认：确认弹窗的「删除」按钮触发，先关弹窗再真正删除
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await deleteProject(deleteTarget.id)
+    setDeleteTarget(null)
   }
 
   const switchEnv = async (projectId, envFileName) => {
@@ -371,22 +425,30 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>EnvSwitch</h1>
-        <span className="subtitle">ENV 配置管理工具</span>
-        <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </svg>
-        </button>
-        <button className="btn-update" onClick={handleCheckUpdates} title="检查更新" disabled={updateState === 'checking'}>
-          {updateState === 'downloaded' ? '更新可用' : '检查更新'}
-        </button>
-        {updateState === 'downloaded' && <span className="update-badge">!</span>}
-        <button className="btn-add" onClick={() => setShowAddDialog(true)}>
-          + 添加项目
-        </button>
+        <div className="app-header-left">
+          <h1 className="app-logo">EnvSwitch</h1>
+          <span className="subtitle">ENV 配置管理工具</span>
+        </div>
+        <div className="app-header-right">
+          <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </button>
+          <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击下载' : '检查更新'} disabled={updateState === 'checking'}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+              {/* 刷新 / 检查更新 图标（feather refresh-cw） */}
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            {updateState === 'downloaded' && <span className="update-badge">!</span>}
+          </button>
+          <button className="btn-add" onClick={() => setShowAddDialog(true)}>
+            + 添加项目
+          </button>
+        </div>
       </header>
 
       {showAddDialog && (
@@ -395,19 +457,39 @@ function App() {
             <h2>添加项目</h2>
             <div className="form-group">
               <label>项目根目录路径</label>
-              <input
-                type="text"
-                value={newDir}
-                onChange={e => setNewDir(e.target.value)}
-                placeholder="例如: D:\projects\my-app"
-                onKeyDown={e => e.key === 'Enter' && addProject()}
-                autoFocus
-              />
+              <div className="path-input-row">
+                <input
+                  type="text"
+                  value={newDir}
+                  onChange={e => setNewDir(e.target.value)}
+                  placeholder="例如: D:\projects\my-app"
+                  onKeyDown={e => e.key === 'Enter' && addProject()}
+                  autoFocus
+                />
+                <button type="button" className="btn-browse" onClick={handleBrowse}>浏览…</button>
+              </div>
             </div>
             {error && <div className="error-msg">{error}</div>}
             <div className="dialog-actions">
               <button className="btn-cancel" onClick={() => setShowAddDialog(false)}>取消</button>
               <button className="btn-confirm" onClick={addProject}>确定添加</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除二次确认：点卡片「删除」时先弹这个，避免误删。仅移除配置映射，不删磁盘文件 */}
+      {deleteTarget && (
+        <div className="dialog-overlay">
+          <div className="dialog" onClick={e => e.stopPropagation()}>
+            <h2>删除项目</h2>
+            <p className="confirm-text">
+              确定要删除项目 <strong>{deleteTarget.name}</strong> 吗？<br />
+              此操作仅从列表中移除该项目的配置映射，<strong>不会</strong>删除磁盘上的实际文件。
+            </p>
+            <div className="dialog-actions">
+              <button className="btn-cancel" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="btn-danger" onClick={confirmDelete}>删除</button>
             </div>
           </div>
         </div>
@@ -432,7 +514,7 @@ function App() {
                 <SortableProjectCard
                   key={project.id}
                   project={project}
-                  onDelete={deleteProject}
+                  onRequestDelete={(id, name) => setDeleteTarget({ id, name })}
                   onSwitch={switchEnv}
                   switching={switching}
                 />
@@ -517,7 +599,7 @@ function App() {
                   <label>Data File</label>
                   <div className="info-path">
                     <span className="info-path-text">{appInfo.dataFilePath}</span>
-                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.dataFilePath)}>Copy</button>
+                    <button className="btn-copy" onClick={() => copyText(appInfo.dataFilePath)}>Copy</button>
                   </div>
                 </div>
               )}
@@ -526,7 +608,7 @@ function App() {
                   <label>Log File</label>
                   <div className="info-path">
                     <span className="info-path-text">{appInfo.logFilePath}</span>
-                    <button className="btn-copy" onClick={() => copyToClipboard(appInfo.logFilePath)}>Copy</button>
+                    <button className="btn-copy" onClick={() => copyText(appInfo.logFilePath)}>Copy</button>
                   </div>
                 </div>
               )}

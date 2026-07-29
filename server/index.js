@@ -23,8 +23,14 @@ app.use((req, res, next) => {
 // pkg 打包时 process.execPath 指向 exe；开发时使用 __dirname
 const APP_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
 const ROOT_DIR = process.pkg ? APP_DIR : path.join(__dirname, '..');
-// 数据存储文件（打包后存储在 exe 同目录的 server 子目录）
-const DATA_DIR = path.join(APP_DIR, 'server');
+// 数据存储文件
+// 策略：
+// - 开发模式（直接 node 运行 server/index.js）：数据存到当前目录的 data.json（即 __dirname/data.json），
+//   避免出现"server/server/data.json"双层嵌套（历史 bug：早期版本对 dev 模式也拼了 'server' 子目录）
+// - pkg 打包模式（process.pkg=true）：数据存到 exe 同级目录的 server/ 子目录，
+//   用户数据不应该混进 exe 内部，也方便用户备份/迁移（整个 server/ 目录就是一份完整数据）
+// 注释印证：原注释明确写"打包后存储在 exe 同目录的 server 子目录"——本意就是仅 pkg 模式用 server/ 子目录
+const DATA_DIR = process.pkg ? path.join(APP_DIR, 'server') : __dirname;
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const watchers = new Map(); // projectId -> chokidar watcher
 

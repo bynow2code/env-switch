@@ -575,10 +575,14 @@ async function startServer() {
 async function createWindow() {
   log('[MAIN] 创建主窗口 …');
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
+    // 窗口默认尺寸：根据 1080p/2K 显示器实测反推——之前默认 1200×800 在宽屏上
+    // 居中放置后，窗口外侧两侧大片桌面背景，截图看起来像"窗口两边大量空白"。
+    // 改大到 1500×900：CSS 的 .app width:100% + .project-list grid auto-fill
+    // 会自动在更大空间里铺满（grid 实际本来就铺满窗口，问题只是窗口本身偏小）。
+    width: 1500,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -639,6 +643,18 @@ function initAutoUpdater() {
       logFilePath: path.join(REAL_USER_DATA, 'logs', 'main.log'), // 主进程日志路径
       repoUrl: 'https://github.com/bynow2code/env-switch' // 源码仓库地址
     }
+  });
+
+  // 调起系统文件夹选择器（添加项目弹窗的「浏览…」按钮）：返回选中的目录绝对路径，用户取消返回 null。
+  // 必须用 mainWindow 作为 parent，否则在部分系统上对话框会失去焦点 / 无模态。
+  ipcMain.handle('app:select-folder', async () => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择项目根目录',
+      properties: ['openDirectory', 'createDirectory'] // 仅选文件夹，且允许在对话框里新建目录
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   });
 
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支

@@ -26,5 +26,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, data) => callback(data)
     ipcRenderer.on('update-event', listener)
     return () => ipcRenderer.removeListener('update-event', listener)
-  }
+  },
+
+  // 调起系统文件夹选择器（添加项目时用）：对应主进程 app:select-folder
+  // 返回选中的目录绝对路径字符串；用户取消则返回 null。
+  // 渲染端不要直接 require('electron').dialog —— contextIsolation 下拿不到，必须走桥。
+  selectFolder: () => ipcRenderer.invoke('app:select-folder')
 })

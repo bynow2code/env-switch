@@ -24,21 +24,44 @@ body {
 .app-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 2px solid #e8ecf1;
 }
 
-/* 弹性占位，把右侧按钮组推到右边（原来由 subtitle 占位） */
-.app-header-spacer {
-  flex: 1;
+/* 左侧：logo + 副标题；右侧：操作按钮组。space-between 让两组分别贴边，
+   替代原先的 .app-header-spacer 占位元素（已删除，纯死 CSS）。 */
+.app-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* logo 用基础样式覆盖浏览器默认 h1（约 2em 大粗体），与副标题基线对齐 */
+.app-logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0;
+  line-height: 1;
+}
+
+.app-header .subtitle {
+  font-size: 13px;
+  color: #9ca3af;
 }
 
 /* 头部按钮统一规范：相同高度、相同圆角、相同字号字重、相同颜色，
    仅在「填充/描边/纯图标」上做层级区分，强化一组按钮的视觉统一 */
 .btn-add,
-.btn-update,
 .btn-icon {
   height: 36px;
   border-radius: 8px;
@@ -51,13 +74,11 @@ body {
 }
 
 .btn-add:active,
-.btn-update:active,
 .btn-icon:active {
   transform: translateY(1px);
 }
 
 .btn-add:disabled,
-.btn-update:disabled,
 .btn-icon:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -75,20 +96,9 @@ body {
   border-color: #4338ca;
 }
 
-/* 检查更新：描边次按钮，与主按钮同色但反相，hover 时反相填充 */
-.btn-update {
-  padding: 0 18px;
-  background: #fff;
-  color: #4f46e5;
-  border: 1.5px solid #4f46e5;
-}
-.btn-update:hover:not(:disabled) {
-  background: #4f46e5;
-  color: #fff;
-}
-
 /* 关于：纯图标方按钮，与右两个按钮同高 36px、同色、同圆角，对齐视觉语言 */
 .btn-icon {
+  position: relative;
   width: 36px;
   padding: 0;
   display: inline-flex;
@@ -108,6 +118,9 @@ body {
 
 /* 有可用更新时的小红点提示 */
 .update-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -119,6 +132,7 @@ body {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  border: 2px solid #fff;
 }
 
 /* Update modal */
@@ -225,56 +239,6 @@ body {
   transition: width 0.2s ease;
 }
 
-/* About modal */
-.about-dialog {
-  width: 400px;
-}
-
-.about-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.about-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 14px;
-}
-
-.about-key {
-  flex-shrink: 0;
-  width: 70px;
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.about-value {
-  color: #1a1a2e;
-  font-weight: 500;
-  word-break: break-word;
-}
-
-.about-link {
-  /* 这是个 <button>，清掉按钮默认样式，让它在视觉上就是一条链接 */
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-weight: 500;
-  color: #4f46e5;
-  text-decoration: none;
-  cursor: pointer;
-  word-break: break-all;
-  text-align: left;
-}
-
-.about-link:hover {
-  text-decoration: underline;
-}
-
 /* Loading */
 .loading {
   display: flex;
@@ -347,10 +311,50 @@ body {
   box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
 }
 
+/* 路径输入框 + 浏览按钮 横向排列 */
+.path-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-input-row input {
+  flex: 1;
+  min-width: 0; /* 防止长路径把按钮挤掉 */
+}
+
+.btn-browse {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  background: #fff;
+  color: #4f46e5;
+  border: 1px solid #4f46e5;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-browse:hover {
+  background: #4f46e5;
+  color: #fff;
+}
+
 .error-msg {
   color: #ef4444;
   font-size: 13px;
   margin-bottom: 12px;
+}
+
+.confirm-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #374151;
+  margin-bottom: 20px;
+}
+
+.confirm-text strong {
+  color: #1a1a2e;
 }
 
 .dialog-actions {
@@ -391,24 +395,48 @@ body {
   background: #4338ca;
 }
 
-/* Project List */
-.project-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+/* 危险操作按钮（删除确认弹窗），尺寸/圆角与 .btn-cancel/.btn-confirm 对齐，仅换红色 */
+.btn-danger {
+  padding: 8px 18px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-/* Project Card */
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+/* Project List —— 用 CSS Grid 做卡片网格（替代原先的 flex + calc 方案）。
+   为什么不用 flex：原先 `flex: 1 1 calc(33.333% - 8px)` 经 esbuild 压缩会把 `1 1`
+   整个吞掉，变成非法的 `flex: calc(...)`，浏览器忽略整条声明 → 卡片宽度约束失效、
+   被撑得超高/超宽。Grid 的 minmax() 不涉及 flex 简写，压缩器不会破坏它，宽度稳定。
+   align-items: start 让卡片按各自内容高度顶部对齐，不再 stretch 产生空白。 */
+.project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+/* Project Card —— 纵向 flex 容器，宽度交给外层 grid 列控制。
+   不再写任何 flex-grow / calc 宽度：彻底规避 esbuild 压缩 flex 简写的 bug。
+   min-width: 0 关键：允许内部超长文件名 / 超长 env 值收缩换行，而不是把卡片撑破 grid 列宽。 */
 .project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
   background: #fff;
   border-radius: 8px;
   padding: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   border: 1px solid #e5e7eb;
   transition: box-shadow 0.2s;
-  flex: 1 1 calc(33.333% - 8px);
-  min-width: 280px;
-  max-width: calc(33.333% - 8px);
   cursor: default;
 }
 
@@ -437,13 +465,37 @@ body {
   font-weight: 700;
   color: #1a1a2e;
   margin-bottom: 2px;
+  /* 超长项目名单行截断（…），不撑宽卡片 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.project-dir {
-  font-size: 12px;
-  color: #9ca3af;
-  word-break: break-all;
-  font-family: 'Consolas', 'Monaco', monospace;
+/* 项目路径按钮：默认不裸显示完整路径（长 WSL 路径暴露目录结构且撑高卡片）。
+   仅显示一个低调的 📁 入口，hover 显示完整路径（title），点击复制到剪贴板。 */
+/* 项目路径按钮：移到删除按钮左侧，与拖动/删除按钮同属一组小操作按钮，
+   因此尺寸、圆角、边框、交互风格完全对齐（见 .btn-delete / .btn-drag）。 */
+.project-dir-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  background: transparent;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.project-dir-btn:hover {
+  color: #475569;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.project-dir-btn:active {
+  background: #f1f5f9;
 }
 
 .btn-delete {
@@ -495,71 +547,87 @@ body {
   cursor: grabbing;
 }
 
-/* Current Env */
+/* Current Env —— 重新设计：CSS Grid 双列对齐，彻底消除"没对齐"的视觉感
+   ─────────────────────────────────────────────────────────────────────
+   之前的 flex 嵌套（.env-current > .env-values > .env-item(key+value)）
+   在某些卡片宽度下会让徽标被拉伸成"窄高竖条"，且 label/value 对齐靠运气。
+   现改为：
+   - .env-current：白底浅边小卡片，纵向 flex 放标题 + 网格
+   - .env-values：grid-template-columns: max-content 1fr，左列自适应 label、右列占满
+   - .env-item：display: contents，让 key/value 直接成为网格子项，绕过 flex 嵌套拉伸
+   - label 改纯文字（去小灰底胶囊），视觉更轻盈；value 仍是浅灰胶囊徽标（视觉重点）
+   ───────────────────────────────────────────────────────────────────── */
 .env-current {
-  background: #f9fafb;
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
+  background: #ffffff;
+  border: 1px solid #f3f4f6;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .env-label {
-  font-size: 10px;
+  /* "当前配置" / "环境配置切换" 等区块小标题 */
+  font-size: 11px;
   font-weight: 700;
-  color: #6b7280;
+  color: #9ca3af;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0.6px;
+  margin: 0;
 }
 
 .env-values {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.env-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 6px;
   align-items: center;
-  /* 显式 flex-start + 子元素 flex:0 0 auto：保证 key 和 value 紧挨在左侧，
-     避免卡片拉宽后 value 被某种 inherited/计算样式推到右端（出现中间一大段空白的现象）。
-     flex-wrap 兜底窄屏换行。 */
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 6px 8px;
+  min-width: 0;
 }
 
-.env-item > .env-key,
-.env-item > .env-value {
-  flex: 0 0 auto;
+/* display: contents：.env-item 不再生成盒子，key/value 直接挂到 .env-values 网格列。
+   杜绝嵌套 flex 在窄卡片下把徽标拉伸成竖条的怪异现象。 */
+.env-item {
+  display: contents;
 }
 
 .env-key {
   font-size: 11px;
   font-weight: 600;
-  color: #6b7280;
-  background: #e5e7eb;
-  padding: 2px 6px;
-  border-radius: 4px;
+  color: #9ca3af;
   font-family: 'Consolas', 'Monaco', monospace;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 .env-value {
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: #1a1a2e;
   font-family: 'Consolas', 'Monaco', monospace;
+  /* 超长值（如完整路径）允许在网格单元内换行，不再撑宽卡片 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .env-value em {
   font-style: italic;
   font-weight: 400;
-  color: #d1d5db;
+  /* 未设置占位：比灰底深一档，保证可见但不抢眼 */
+  color: #9ca3af;
 }
 
 .env-badge {
-  /* 基础徽标：中性灰底。所有 env 值（含未识别的 APP_ENV，如 pms-dev）默认都有背景，
-     不再出现「APP_NAME 有灰底、APP_ENV 透明」的不统一；识别到的标准环境再覆盖为语义色。 */
+  /* 基础徽标胶囊：APP_NAME / APP_ENV 的值都用它呈现，视觉统一 */
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 12px;
@@ -568,33 +636,11 @@ body {
   color: #475569;
 }
 
-.env-badge.local {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.env-badge.development,
-.env-badge.dev {
-  background: #dcfce7;
-  color: #16a34a;
-}
-
-.env-badge.staging {
-  background: #fef3c7;
-  color: #d97706;
-}
-
-.env-badge.production,
-.env-badge.prod {
-  background: #fecaca;
-  color: #dc2626;
-}
-
-.env-badge.testing,
-.env-badge.test {
-  background: #e0e7ff;
-  color: #4f46e5;
-}
+/* 徽标语义色块（dev/prod/staging/test/local 等）已统一删除：
+   卡片内 APP_NAME 与 APP_ENV 两个徽标并排，需要视觉一致；
+   统一走 .env-badge 基础中性灰（#f1f5f9 底 / #475569 字），
+   避免因 env class 触发语义色导致两个徽标一灰一蓝、互不协调。
+   如未来需在别处独立展示环境徽标并希望区分语义色，可在此恢复并加注释。 */
 
 /* Env Files */
 .env-files {
@@ -606,20 +652,24 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* 文件多时列表内部滚动，而不是把整张卡片无限撑高 */
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .env-file-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 4px 8px;
-  background: #f9fafb;
+  background: #f3f4f6;
   border-radius: 4px;
   transition: background 0.15s;
 }
 
 .env-file-item:hover {
-  background: #f3f4f6;
+  background: #e5e7eb;
 }
 
 .env-file-name {
@@ -655,34 +705,18 @@ body {
 }
 
 .env-files-empty {
-  padding: 20px 0 8px;
+  /* 空状态占位卡片：dashed 边框 + 浅灰底 + 中等灰字。
+     原样式 padding + 极浅灰字（#c4c4c4）+ border-top 在白底卡片上几乎完全隐形，
+     被误判为「区域没渲染 / 样式错乱」。升级为清晰占位卡后「暂无 .env.xxx 配置文件」
+     状态绝对可见，不会再与正常状态混淆。 */
+  margin-top: 8px;
+  padding: 14px;
   text-align: center;
-  color: #c4c4c4;
+  color: #6b7280;
   font-size: 13px;
-  border-top: 1px solid #f3f4f6;
-}
-
-/* ============================================================
-   App Info 图标按钮（header 右侧，无文字，符合工具栏紧凑风格）
-   ============================================================ */
-.btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  background: #fff;
-  color: #4f46e5;
-  border: 1.5px solid #4f46e5;
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
   border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
-}
-
-.btn-icon:hover {
-  background: #4f46e5;
-  color: #fff;
 }
 
 /* ============================================================
@@ -740,8 +774,9 @@ body {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: #374151;
-  white-space: nowrap;
-  overflow-x: auto;
+  /* 路径字符串很长时按字符自然换行（路径里含 \ 也能断），不要出现水平滚动 */
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 /* Copy 按钮 */

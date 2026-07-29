@@ -1,6 +1,6 @@
 {
   "name": "env-switch",
-  "version": "0.1.7",
+  "version": "0.1.0",
   "description": "ENV 配置操作工具",
   "main": "electron-main.js",
   "scripts": {
