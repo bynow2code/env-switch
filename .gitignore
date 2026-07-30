@@ -2,7 +2,9 @@ node_modules/
 dist/
 client/dist/
 release/
-# 由 gen-icons.js 从 favicon.svg 自动生成（构建前由 electron-* script 生成，无需进 git）
+# 由 gen-icons.js 从 logo.svg 自动生成（构建前由 electron-* script 生成，无需进 git）。
+# 注意：源文件 logo.svg 与 favicon.svg 都不在此忽略范围内，必须进 git；
+#       只有下面生成的 png/ico 才被忽略。
 client/public/*.png
 client/public/*.ico
 

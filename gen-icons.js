@@ -1,8 +1,13 @@
-// 从 client/public/favicon.svg 渲染生成「打包用 logo」（参考 easy-ops）
+// 从 client/public/logo.svg 渲染生成「打包用 logo」（参考 easy-ops）
 //   client/public/logo-1024.png  -> 默认图标（build.icon），electron-builder 自动转 icns 等
 //   client/public/logo-win.png   -> 运行时窗口图标（electron-main.js 加载 client/dist/logo-win.png）
 //   client/public/logo-mac.png   -> macOS 图标（build.mac.icon）
 //   client/public/logo.ico       -> Windows 图标（build.win.icon + NSIS 安装/卸载程序图标）
+//
+// 重要：应用图标源用 logo.svg（图形贴边填满画布），不要用 favicon.svg！
+//   favicon.svg 四周留了约 12% 透明边距（只适合浏览器标签页 favicon）；
+//   若直接拿它当 exe / 桌面快捷方式 / 任务栏图标，Windows 本身又在画布里给图标留了框架，
+//   叠加后图标会"小一大圈"。标准应用图标（Chrome/VS Code/微信等）都是贴边填满画布的。
 //
 // 注意：client/dist/ 是 Vite 构建输出目录（vite.config.js 的 outDir: 'dist'），
 //       本脚本产出的文件会在 npm run build 时由 Vite 从 client/public 拷贝到 client/dist/，无需手动生成。
@@ -16,10 +21,10 @@ const pngToIco = require('png-to-ico').default;
 
 // client/public 是打包资源的源目录（与 easy-ops 保持一致）
 const clientPublic = path.join(__dirname, 'client', 'public');
-// 真正的 logo 源文件：EnvSwitch 自己的 favicon.svg（"Env" 字样）
-const svgPath = path.join(clientPublic, 'favicon.svg');
+// 真正的 logo 源文件：应用图标专用、图形贴边填满画布的 logo.svg（"Env" 字样）
+const svgPath = path.join(clientPublic, 'logo.svg');
 
-// 从 favicon.svg 直接渲染指定尺寸的 PNG（高清母版，清晰）
+// 从 logo.svg 直接渲染指定尺寸的 PNG（高清母版，清晰）
 async function renderPngBuffer(size) {
   return sharp(fs.readFileSync(svgPath))
     .resize(size, size, { kernel: sharp.kernel.lanczos3 })

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- 应用图标专用源：图形贴边填满整个画布（无透明边距）。
+       原因：favicon.svg 四周留了约 12% 透明边距（适合浏览器标签页），
+       但若直接拿它当 exe / 桌面快捷方式 / 任务栏图标，Windows 本身又在画布里给图标留了框架，
+       叠加后图标会"小一大圈"。Windows/macOS 标准应用图标（Chrome、VS Code、微信等）
+       都是图形贴边填满画布的，故此处圆角矩形贴边（rx 取约 22% 对应标准 app 圆角）。
+       网页 favicon 仍使用 favicon.svg（带边距版），二者各司其职。 -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="#1E1E2E"/>
+  <!-- Env 文字：与 favicon.svg 同字体栈、同字重 800、收紧字距；字号放大到 96 使其在贴边画布里更饱满居中 -->
+  <text x="128" y="162" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
+</svg>
