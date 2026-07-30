@@ -636,6 +636,43 @@ body {
   background: #e5e7eb;
 }
 
+/* 当前在用配置的「选中」态：浅绿底 + 左侧绿条，明确指示正在使用哪条配置。
+   padding-left 由 8px 减为 5px，抵消左侧 3px 边框，保持文件名与未选中行对齐不抖动。 */
+.env-file-item.active {
+  background: #ecfdf5;
+  border-left: 3px solid #10b981;
+  padding-left: 5px;
+}
+
+.env-file-item.active:hover {
+  background: #d1fae5;
+}
+
+/* 选中行右侧操作区：容纳「使用中」胶囊 + 切换按钮，二者并排 */
+.env-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 「使用中」标记：仅当某文件的实时内容命中、但不在选中范围内时显示（绿色胶囊），
+   用于提示"当前 .env 的实际内容其实来自这条配置"，而非替换切换按钮。 */
+.env-file-active-tag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #047857;
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .env-file-name {
   font-size: 12px;
   font-weight: 500;

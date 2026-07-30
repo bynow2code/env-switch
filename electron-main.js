@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const { execSync } = require('child_process');
+const crypto = require('crypto');
 
 // 先固定「真实的」userData 路径：下方开发模式会把 userData 重定向到临时缓存目录以解决
 // Chromium 缓存写权限问题，但日志目录与项目数据（data.json）需落在原始 userData 下，故先捕获。
@@ -173,6 +174,31 @@ function isWslPath(filePath) {
   return /^\\\\wsl(?:\.localhost)?\\/i.test(filePath);
 }
 
+// 读取文件原始内容（兼容 WSL 路径），读不到返回空串
+function readRawFile(fp) {
+  try {
+    if (isWslPath(fp)) return wslReadFile(fp)
+    return fs.readFileSync(fp, 'utf-8')
+  } catch (e) {
+    return ''
+  }
+}
+
+// 反推「当前激活的是哪个 .env.xxx」：直接比对 .env 与各 .env.xxx 的文件内容（md5）。
+// 切换时 .env 是 .env.xxx 的逐字节拷贝，故能精确命中；
+// 若用户手动改过 .env 而不匹配任何文件，则视为「未关联」，UI 不高亮任何行。
+// 返回文件名（如 .env.dev），无匹配时返回空串。
+function getActiveEnvFile(projectDir, envFiles) {
+  if (!envFiles || envFiles.length === 0) return ''
+  const envHash = crypto.createHash('md5').update(readRawFile(path.join(projectDir, '.env'))).digest('hex')
+  if (!envHash) return '' // .env 不存在或读不到
+  for (const f of envFiles) {
+    const h = crypto.createHash('md5').update(readRawFile(path.join(projectDir, f))).digest('hex')
+    if (h && h === envHash) return f
+  }
+  return ''
+}
+
 // 解析 .env 文件内容为键值对
 function parseEnvFile(filePath) {
   const result = {};
@@ -212,7 +238,9 @@ function parseEnvFile(filePath) {
 }
 
 // 获取项目信息
-function getProjectInfo(projectDir) {
+// storedActiveEnvFile：data.json 里持久化的"上次选中配置"（切换时写入）。
+//   仅作为 md5 失配时的兜底；正常情况下以 md5 实时比对 .env 与各 .env.xxx 为准（见函数内实现）。
+function getProjectInfo(projectDir, storedActiveEnvFile) {
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
   log(`[PROJECT] 读取项目信息 ${projectDir}`);
@@ -253,11 +281,24 @@ function getProjectInfo(projectDir) {
     log(`[PROJECT] 获取项目信息失败: ${e.message}`);
   }
 
+  // 当前在用配置：严格按照 md5 实时比对 .env 与各 .env.xxx 的原始内容判定。
+  // 切换时 .env 是源文件的逐字节拷贝（本地 readFileSync→writeFileSync / WSL wsl.exe cp），
+  // 故 md5 完全一致、能精确命中；
+  // 只有当 md5 完全失配（如手动改过 .env、或源文件被外部改动）时，
+  // 才回退到持久化的上次选择（data.json 的 activeEnvFile），让对应行仍可高亮、
+  // 且切换按钮保留以便一键重新套用。其余情况（从未切换 + 手动 .env）不高亮任何行，保持诚实。
+  let activeEnvFile = getActiveEnvFile(projectDir, envFiles);
+  if (!activeEnvFile && storedActiveEnvFile && envFiles.includes(storedActiveEnvFile)) {
+    activeEnvFile = storedActiveEnvFile;
+  }
+
   return {
     appName: envVars['APP_NAME'] || '',
     appEnv: envVars['APP_ENV'] || '',
     allEnvVars: envVars,
-    envFiles
+    envFiles,
+    // 当前在用配置：md5 实时比对优先，失配时回退持久化选择（前端用于高亮 + 标记"使用中"）
+    activeEnvFile
   };
 }
 
@@ -358,14 +399,15 @@ async function startServer() {
   expressApp.get('/api/projects', (req, res) => {
     const data = loadData();
     const projects = data.projects.map(p => {
-      const info = getProjectInfo(p.dir);
+      const info = getProjectInfo(p.dir, p.activeEnvFile);
       return {
         id: p.id,
         name: p.name,
         dir: p.dir,
         appName: info.appName,
         appEnv: info.appEnv,
-        envFiles: info.envFiles
+        envFiles: info.envFiles,
+        activeEnvFile: info.activeEnvFile
       };
     });
     res.json(projects);
@@ -376,7 +418,7 @@ async function startServer() {
     const project = data.projects.find(p => p.id === req.params.id);
     if (!project) return res.status(404).json({ error: '项目不存在' });
 
-    const info = getProjectInfo(project.dir);
+    const info = getProjectInfo(project.dir, project.activeEnvFile);
     res.json({
       id: project.id,
       name: project.name,
@@ -384,7 +426,8 @@ async function startServer() {
       appName: info.appName,
       appEnv: info.appEnv,
       allEnvVars: info.allEnvVars,
-      envFiles: info.envFiles
+      envFiles: info.envFiles,
+      activeEnvFile: info.activeEnvFile
     });
   });
 
@@ -442,7 +485,8 @@ async function startServer() {
       dir: project.dir,
       appName: info.appName,
       appEnv: info.appEnv,
-      envFiles: info.envFiles
+      envFiles: info.envFiles,
+      activeEnvFile: info.activeEnvFile
     });
   });
 
@@ -507,7 +551,12 @@ async function startServer() {
         }
       }
 
-      const info = getProjectInfo(project.dir);
+      // 持久化"当前选中配置"：把刚切换到的文件名写入 data.json，
+      // 这样即使之后手动改了 .env、或重启应用，选中高亮依然稳定（不依赖内容比对）。
+      project.activeEnvFile = envFileName;
+      saveData(data);
+
+      const info = getProjectInfo(project.dir, project.activeEnvFile);
       io.emit('env-changed', { projectId: project.id, ...info });
       log(`[SERVER] 环境切换成功 ${project.id} -> ${envFileName}`);
       res.json({
@@ -515,7 +564,8 @@ async function startServer() {
         projectId: project.id,
         appName: info.appName,
         appEnv: info.appEnv,
-        envFiles: info.envFiles
+        envFiles: info.envFiles,
+        activeEnvFile: info.activeEnvFile
       });
     } catch (e) {
       logErr('SERVER', '环境切换失败', project.id, envFileName, e.message);

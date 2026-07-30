@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const chokidar = require('chokidar');
 const http = require('http');
 const { execSync } = require('child_process');
@@ -166,8 +167,35 @@ function parseEnvFile(filePath) {
   return result;
 }
 
+// 读取文件原始内容（兼容 WSL 路径），读不到返回空串
+function readRawFile(fp) {
+  try {
+    if (isWslPath(fp)) return wslReadFile(fp)
+    return fs.readFileSync(fp, 'utf-8')
+  } catch (e) {
+    return ''
+  }
+}
+
+// 反推「当前激活的是哪个 .env.xxx」：直接比对 .env 与各 .env.xxx 的文件内容（md5）。
+// 切换时 .env 是 .env.xxx 的逐字节拷贝，故能精确命中；
+// 若用户手动改过 .env 而不匹配任何文件，则视为「未关联」，UI 不高亮任何行。
+// 返回文件名（如 .env.dev），无匹配时返回空串。
+function getActiveEnvFile(projectDir, envFiles) {
+  if (!envFiles || envFiles.length === 0) return ''
+  const envHash = crypto.createHash('md5').update(readRawFile(path.join(projectDir, '.env'))).digest('hex')
+  if (!envHash) return '' // .env 不存在或读不到
+  for (const f of envFiles) {
+    const h = crypto.createHash('md5').update(readRawFile(path.join(projectDir, f))).digest('hex')
+    if (h && h === envHash) return f
+  }
+  return ''
+}
+
 // 获取项目信息
-function getProjectInfo(projectDir) {
+// storedActiveEnvFile：data.json 里持久化的"当前选中配置"（切换时写入）。
+//   优先用它（显式选择，稳定可靠）；为兼容旧项目/尚未切换过的项目，缺失时回退到内容比对反推。
+function getProjectInfo(projectDir, storedActiveEnvFile) {
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
 
@@ -204,11 +232,21 @@ function getProjectInfo(projectDir) {
     }
   } catch (e) {}
 
+  // 当前在用配置：优先用持久化的显式选择；否则回退到内容比对反推（md5）。
+  let activeEnvFile = '';
+  if (storedActiveEnvFile && envFiles.includes(storedActiveEnvFile)) {
+    activeEnvFile = storedActiveEnvFile;
+  } else {
+    activeEnvFile = getActiveEnvFile(projectDir, envFiles);
+  }
+
   return {
     appName: envVars['APP_NAME'] || '',
     appEnv: envVars['APP_ENV'] || '',
     allEnvVars: envVars,
-    envFiles
+    envFiles,
+    // 当前在用配置：.env 与哪个 .env.xxx 内容一致（前端用于高亮"选中"行）
+    activeEnvFile
   };
 }
 
@@ -285,14 +323,15 @@ function setupWatcher(projectId, projectDir) {
 app.get('/api/projects', (req, res) => {
   const data = loadData();
   const projects = data.projects.map(p => {
-    const info = getProjectInfo(p.dir);
+    const info = getProjectInfo(p.dir, p.activeEnvFile);
     return {
       id: p.id,
       name: p.name,
       dir: p.dir,
       appName: info.appName,
       appEnv: info.appEnv,
-      envFiles: info.envFiles
+      envFiles: info.envFiles,
+      activeEnvFile: info.activeEnvFile
     };
   });
   res.json(projects);
@@ -304,7 +343,7 @@ app.get('/api/projects/:id', (req, res) => {
   const project = data.projects.find(p => p.id === req.params.id);
   if (!project) return res.status(404).json({ error: '项目不存在' });
 
-  const info = getProjectInfo(project.dir);
+  const info = getProjectInfo(project.dir, project.activeEnvFile);
   res.json({
     id: project.id,
     name: project.name,
@@ -312,7 +351,8 @@ app.get('/api/projects/:id', (req, res) => {
     appName: info.appName,
     appEnv: info.appEnv,
     allEnvVars: info.allEnvVars,
-    envFiles: info.envFiles
+    envFiles: info.envFiles,
+    activeEnvFile: info.activeEnvFile
   });
 });
 
@@ -463,7 +503,12 @@ app.post('/api/projects/:id/switch', (req, res) => {
       }
     }
 
-    const info = getProjectInfo(project.dir);
+    // 持久化"当前选中配置"：把刚切换到的文件名写入 data.json，
+    // 这样即使之后手动改了 .env、或重启应用，选中高亮依然稳定（不依赖内容比对）。
+    project.activeEnvFile = envFileName;
+    saveData(data);
+
+    const info = getProjectInfo(project.dir, project.activeEnvFile);
     io.emit('env-changed', { projectId: project.id, ...info });
     console.log(`环境切换成功 ${project.id} -> ${envFileName}`);
     res.json({
@@ -471,7 +516,8 @@ app.post('/api/projects/:id/switch', (req, res) => {
       projectId: project.id,
       appName: info.appName,
       appEnv: info.appEnv,
-      envFiles: info.envFiles
+      envFiles: info.envFiles,
+      activeEnvFile: info.activeEnvFile
     });
   } catch (e) {
     res.status(500).json({ error: '切换失败: ' + e.message });

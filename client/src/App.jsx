@@ -127,15 +127,23 @@ function ProjectCardView({
           <div className="env-file-list">
             {project.envFiles.map(file => {
               const isSwitching = switching[project.id] === file
+              // 当前在用配置：由服务端严格 md5 比对得出（失配时回退持久化的上次选择）。
+              // 命中文件即「真正在用」的那条——高亮 + 显示「使用中」；
+              // 切换按钮在所有行都保留，便于随时覆盖/重新套用（应对源文件被外部改动的情况）。
+              const isActive = project.activeEnvFile === file
               return (
-                <div key={file} className="env-file-item">
+                <div key={file} className={`env-file-item${isActive ? ' active' : ''}`}>
                   <span className="env-file-name">{file}</span>
-                  <button
-                    className={`btn-switch ${isSwitching ? 'switching' : ''}`}
-                    onClick={() => onSwitch(project.id, file)}
-                    disabled={!!switching[project.id]}
-                    title="切换到该环境"
-                  >
+                  <div className="env-file-actions">
+                    {isActive && (
+                      <span className="env-file-active-tag" title="当前 .env 与此文件内容一致（md5 比对相同）">使用中</span>
+                    )}
+                    <button
+                      className={`btn-switch ${isSwitching ? 'switching' : ''}`}
+                      onClick={() => onSwitch(project.id, file)}
+                      disabled={!!switching[project.id]}
+                      title={isActive ? '重新套用此配置（覆盖当前 .env）' : '切换到该环境'}
+                    >
                     {isSwitching ? (
                       <span className="switch-dots">…</span>
                     ) : (
@@ -145,8 +153,9 @@ function ProjectCardView({
                       </svg>
                     )}
                   </button>
-                </div>
-              )
+                  </div>
+          </div>
+        )
             })}
           </div>
         </div>
@@ -251,7 +260,7 @@ function App() {
       setProjects(prev =>
         prev.map(p =>
           p.id === data.projectId
-            ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles }
+            ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
             : p
         )
       )
@@ -427,7 +436,7 @@ function App() {
         setProjects(prev =>
           prev.map(p =>
             p.id === projectId
-              ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles }
+              ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
               : p
           )
         )
