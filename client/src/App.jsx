@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { io } from 'socket.io-client'
 import {
   DndContext,
+  DragOverlay,
   closestCenter,
   PointerSensor,
   useSensor,
@@ -47,27 +48,30 @@ async function copyText(text) {
   }
 }
 
-// 可拖拽的项目卡片
-function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) {
+// 纯展示的项目卡片（不含拖拽逻辑）。
+// 被 SortableProjectCard（网格里、参与排序）和 DragOverlay（拖拽中浮层）共用，
+// 保证拖拽浮层与原位卡片视觉完全一致。
+// dragHandleProps：拖拽手柄的 attributes+listeners（仅 sortable 版本传入；overlay 不传，浮层不可再拖）。
+// innerRef / style：仅 sortable 版本传入 setNodeRef 与 transform 样式；overlay 不传。
+// isOverlay：true 时套上 .dragging 阴影样式（浮层视觉强化）。
+function ProjectCardView({
+  project,
+  onRequestDelete,
+  onSwitch,
+  switching,
+  dragHandleProps = {},
+  innerRef,
+  style,
+  isOverlay = false,
+}) {
   const [copied, setCopied] = useState(false)
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: project.id })
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : 1,
-  }
 
   return (
-    <div ref={setNodeRef} style={style} className={`project-card${isDragging ? ' dragging' : ''}`}>
+    <div
+      ref={innerRef}
+      style={style}
+      className={`project-card${isOverlay ? ' dragging' : ''}`}
+    >
       <div className="project-header">
         <div className="project-info">
           <h3 className="project-name">{project.name}</h3>
@@ -75,8 +79,7 @@ function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) 
         <div className="project-actions">
           <button
             className="btn-drag"
-            {...attributes}
-            {...listeners}
+            {...dragHandleProps}
             title="拖动排序"
           >
             ⠿
@@ -158,6 +161,40 @@ function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) 
   )
 }
 
+// 可拖拽的项目卡片（网格内、参与排序）。
+function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: project.id })
+
+  // 修复：拖动时不再让原位卡片通过 transform 跟随指针（这是横向滚动条的根因——
+  // transform 后的元素会被计入文档 scrollable overflow，指针拖到窗口右侧就撑出无限横向滚动条）。
+  // 改为交给 DragOverlay 用 fixed 浮层承载拖拽预览，原位只保留半透明占位（让位动画由其它卡片承担）。
+  const style = {
+    transform: isDragging ? undefined : CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    zIndex: isDragging ? 10 : 1,
+  }
+
+  return (
+    <ProjectCardView
+      project={project}
+      onRequestDelete={onRequestDelete}
+      onSwitch={onSwitch}
+      switching={switching}
+      dragHandleProps={{ ...attributes, ...listeners }}
+      innerRef={setNodeRef}
+      style={style}
+    />
+  )
+}
+
 function App() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -183,6 +220,10 @@ function App() {
       activationConstraint: { distance: 5 },
     })
   )
+
+  // 当前正在拖拽的项目 id（DragOverlay 用）。null 表示没有拖拽进行中。
+  const [activeId, setActiveId] = useState(null)
+  const activeProject = activeId ? projects.find(p => p.id === activeId) : null
 
   const loadProjects = useCallback(async () => {
     console.log('[WEB] 加载项目列表 …')
@@ -401,8 +442,14 @@ function App() {
     }
   }
 
+  // 拖拽开始：记录被拖项目 id，供 DragOverlay 渲染浮层预览
+  const handleDragStart = (event) => {
+    setActiveId(event.active.id)
+  }
+
   const handleDragEnd = (event) => {
     const { active, over } = event
+    setActiveId(null)
     if (!over || active.id === over.id) return
 
     setProjects(prev => {
@@ -505,26 +552,42 @@ function App() {
             <p>暂无项目，点击 "+ 添加项目" 开始使用</p>
           </div>
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={projects.map(p => p.id)}
-              strategy={rectSortingStrategy}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
             >
-              {projects.map(project => (
-                <SortableProjectCard
-                  key={project.id}
-                  project={project}
-                  onRequestDelete={(id, name) => setDeleteTarget({ id, name })}
-                  onSwitch={switchEnv}
-                  switching={switching}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+              <SortableContext
+                items={projects.map(p => p.id)}
+                strategy={rectSortingStrategy}
+              >
+                {projects.map(project => (
+                  <SortableProjectCard
+                    key={project.id}
+                    project={project}
+                    onRequestDelete={(id, name) => setDeleteTarget({ id, name })}
+                    onSwitch={switchEnv}
+                    switching={switching}
+                  />
+                ))}
+              </SortableContext>
+
+              {/* DragOverlay：用 position:fixed 的独立浮层承载拖拽中的卡片预览。
+                  这是修复"拖动时无限横向滚动条"的关键——浮层不参与文档布局、
+                  不贡献 scrollable overflow，彻底避免被 translate 出界的卡片撑宽页面。
+                  dnd-kit 会自动把浮层尺寸设为被拖元素的尺寸，视觉无缝衔接。 */}
+              <DragOverlay>
+                {activeProject ? (
+                  <ProjectCardView
+                    project={activeProject}
+                    onSwitch={switchEnv}
+                    switching={switching}
+                    isOverlay
+                  />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
         )}
       </div>
 
