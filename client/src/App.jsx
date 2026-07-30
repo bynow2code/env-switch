@@ -59,6 +59,8 @@ function ProjectCardView({
   onRequestDelete,
   onSwitch,
   switching,
+  refreshing = false,
+  onRefresh = () => {},
   dragHandleProps = {},
   innerRef,
   style,
@@ -83,6 +85,19 @@ function ProjectCardView({
             title="拖动排序"
           >
             ⠿
+          </button>
+          {/* 单卡片刷新按钮：位于路径左侧；检查中（全局刷新 / 单卡片刷新 / WSL 轮询）旋转图标转圈 */}
+          <button
+            type="button"
+            className={`card-refresh${refreshing ? ' spinning' : ''}`}
+            onClick={() => onRefresh(project.id)}
+            disabled={refreshing}
+            title="刷新此项目"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
           </button>
           <button
             type="button"
@@ -171,7 +186,7 @@ function ProjectCardView({
 }
 
 // 可拖拽的项目卡片（网格内、参与排序）。
-function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) {
+function SortableProjectCard({ project, onRequestDelete, onSwitch, switching, refreshing, onRefresh }) {
   const {
     attributes,
     listeners,
@@ -197,6 +212,8 @@ function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) 
       onRequestDelete={onRequestDelete}
       onSwitch={onSwitch}
       switching={switching}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
       dragHandleProps={{ ...attributes, ...listeners }}
       innerRef={setNodeRef}
       style={style}
@@ -212,6 +229,21 @@ function App() {
   const [newDir, setNewDir] = useState('')
   const [error, setError] = useState('')
   const [switching, setSwitching] = useState({})
+
+  // 刷新态：三路来源都让对应卡片的刷新按钮转圈
+  //  - globalRefreshing：header「刷新数据」按钮的全局拉取进行中 → 所有卡片转圈
+  //  - cardRefreshing：单卡片「刷新此项目」按钮的拉取进行中 → 仅该卡片转圈
+  //  - wslChecking：后端 WSL 定时轮询「正在检查」推送（env-checking/checked）→ 仅对应 WSL 卡片转圈
+  const [globalRefreshing, setGlobalRefreshing] = useState(false)
+  const [cardRefreshing, setCardRefreshing] = useState({})
+  const [wslChecking, setWslChecking] = useState({})
+
+  // 设置面板状态：WSL 轮询间隔配置
+  const [settingsWslInterval, setSettingsWslInterval] = useState(5000) // 当前已保存值
+  const [settingsInput, setSettingsInput] = useState('5000')           // 输入框值（字符串，便于受控）
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
 
   // 自动更新相关状态
   const [appVersion, setAppVersion] = useState('')          // 当前版本号
@@ -248,6 +280,86 @@ function App() {
     }
   }, [])
 
+  // 全局刷新（header「刷新数据」按钮）：包一层全局转圈态，期间所有卡片刷新按钮旋转。
+  // 复用 loadProjects，仅在外层管理 globalRefreshing 状态。
+  const refreshAll = useCallback(async () => {
+    setGlobalRefreshing(true)
+    try {
+      await loadProjects()
+    } finally {
+      setGlobalRefreshing(false)
+    }
+  }, [loadProjects])
+
+  // 单卡片刷新：走 /api/projects/:id 拉取该卡片最新数据（本地项目手动即时刷新；
+  // WSL 项目也可借此立即触发一次检查，不必等 3 秒轮询）。仅该卡片转圈。
+  const refreshCard = useCallback(async (projectId) => {
+    setCardRefreshing(prev => ({ ...prev, [projectId]: true }))
+    try {
+      const res = await fetch(`${API_BASE}/projects/${projectId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setProjects(prev =>
+          prev.map(p =>
+            p.id === projectId
+              ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
+              : p
+          )
+        )
+      }
+    } catch (e) {
+      console.error('[WEB] 单卡片刷新失败', projectId, e)
+    } finally {
+      setCardRefreshing(prev => ({ ...prev, [projectId]: false }))
+    }
+  }, [])
+
+  // 进入时拉取当前设置（目前含 WSL 轮询间隔），填充输入框与已保存值
+  useEffect(() => {
+    fetch(`${API_BASE}/settings`)
+      .then(r => r.json())
+      .then(d => {
+        if (d && typeof d.wslPollInterval === 'number') {
+          setSettingsWslInterval(d.wslPollInterval)
+          setSettingsInput(String(d.wslPollInterval))
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // 保存设置：前端校验 → PUT /api/settings → 成功关闭弹窗，失败显示错误
+  const saveSettings = async () => {
+    setSettingsError('')
+    const val = Number(settingsInput)
+    if (!Number.isInteger(val) || val < 500 || val > 600000) {
+      setSettingsError('Interval must be an integer between 500 and 600000 ms.')
+      return
+    }
+    setSettingsSaving(true)
+    try {
+      const res = await fetch(`${API_BASE}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wslPollInterval: val })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSettingsWslInterval(data.wslPollInterval)
+        setShowSettingsModal(false)
+        // 兜底：保存间隔会重建所有 WSL 轮询器（旧 poller 被 close），清空检查中转圈态，
+        // 避免后端 in-flight 的 env-checked 在极端时序下丢失导致某卡片卡在转圈。
+        setWslChecking({})
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setSettingsError(d.error || 'Save failed')
+      }
+    } catch (e) {
+      setSettingsError('Request failed: ' + e.message)
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
   useEffect(() => {
     loadProjects()
   }, [loadProjects])
@@ -264,6 +376,15 @@ function App() {
             : p
         )
       )
+    })
+
+    // WSL 定时轮询「正在检查」：对应卡片刷新按钮转圈；检查结束（含异常/首轮基线/变更/无变更）停转。
+    s.on('env-checking', (data) => {
+      console.log('[WEB] WSL 轮询检查开始', data.projectId)
+      setWslChecking(prev => ({ ...prev, [data.projectId]: true }))
+    })
+    s.on('env-checked', (data) => {
+      setWslChecking(prev => ({ ...prev, [data.projectId]: false }))
     })
 
     return () => s.disconnect()
@@ -493,13 +614,30 @@ function App() {
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
-          <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击下载' : '检查更新'} disabled={updateState === 'checking'}>
+          {/* 真正的「刷新数据」按钮：手动重新拉取所有项目（覆盖 WSL 等无自动监听的场景） */}
+          <button className="btn-icon" onClick={() => refreshAll()} title="刷新数据">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              {/* 刷新 / 检查更新 图标（feather refresh-cw） */}
+              {/* 刷新数据（feather refresh-cw） */}
               <polyline points="23 4 23 10 17 10" />
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
+          </button>
+          {/* 检查更新（feather arrow-up-circle：升级箭头，语义为「检查/执行升级」，与「刷新/设置」明显区分） */}
+          <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击查看' : '检查更新'} disabled={updateState === 'checking'}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+              {/* 检查更新（feather arrow-up-circle：升级箭头，表达「升级」） */}
+              <circle cx="12" cy="12" r="10" />
+              <path d="M16 12l-4-4-4 4" />
+              <path d="M12 16V8" />
+            </svg>
             {updateState === 'downloaded' && <span className="update-badge">!</span>}
+          </button>
+          {/* 设置（新功能，UI 用英文）：调整 WSL 轮询间隔等 */}
+          <button className="btn-icon" onClick={() => setShowSettingsModal(true)} title="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
           </button>
           <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
@@ -571,15 +709,21 @@ function App() {
                 items={projects.map(p => p.id)}
                 strategy={rectSortingStrategy}
               >
-                {projects.map(project => (
+                {projects.map(project => {
+                  // 卡片是否转圈：三路任一成立即转（全局刷新 / 单卡片刷新 / WSL 轮询检查中）
+                  const refreshing = globalRefreshing || !!cardRefreshing[project.id] || !!wslChecking[project.id]
+                  return (
                   <SortableProjectCard
                     key={project.id}
                     project={project}
                     onRequestDelete={(id, name) => setDeleteTarget({ id, name })}
                     onSwitch={switchEnv}
                     switching={switching}
+                    refreshing={refreshing}
+                    onRefresh={refreshCard}
                   />
-                ))}
+                  )
+                })}
               </SortableContext>
 
               {/* DragOverlay：用 position:fixed 的独立浮层承载拖拽中的卡片预览。
@@ -592,6 +736,8 @@ function App() {
                     project={activeProject}
                     onSwitch={switchEnv}
                     switching={switching}
+                    refreshing={false}
+                    onRefresh={() => {}}
                     isOverlay
                   />
                 ) : null}
@@ -717,6 +863,33 @@ function App() {
           </div>
         </div>
       )}
+
+      {showSettingsModal && (
+        <div className="dialog-overlay">
+          <div className="dialog settings-dialog" onClick={e => e.stopPropagation()}>
+            <h2>Settings</h2>
+            <div className="form-group">
+              <label>WSL auto-check interval (ms)</label>
+              <input
+                type="number"
+                min="500"
+                max="600000"
+                step="100"
+                value={settingsInput}
+                onChange={e => setSettingsInput(e.target.value)}
+                disabled={settingsSaving}
+              />
+              <p className="settings-hint">How often WSL projects are polled for .env changes. Range 500–600000 ms.</p>
+            </div>
+            {settingsError && <div className="error-msg">{settingsError}</div>}
+            <div className="dialog-actions">
+              <button className="btn-cancel" onClick={() => { setShowSettingsModal(false); setSettingsError(''); }} disabled={settingsSaving}>Cancel</button>
+              <button className="btn-confirm" onClick={saveSettings} disabled={settingsSaving}>{settingsSaving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

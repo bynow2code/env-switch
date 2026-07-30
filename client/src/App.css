@@ -823,3 +823,55 @@ body {
 .info-link:hover {
   text-decoration: underline;
 }
+
+/* 卡片右上角「刷新此项目」按钮：尺寸 / 圆角 / 边框 / hover 完全对齐同组小操作按钮
+   （.btn-drag / .project-dir-btn / .btn-delete），放在路径按钮左侧。
+   检查中（全局刷新 / 单卡片刷新 / WSL 轮询）时旋转 refresh 图标表示进行中。 */
+.card-refresh {
+  padding: 3px 4px;
+  background: transparent;
+  color: #9ca3af;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.card-refresh:hover:not(:disabled) {
+  color: #4f46e5;
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.card-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* 检查中：图标持续旋转（0.8s 一圈） */
+.card-refresh.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 设置弹窗：宽度对齐其它弹窗（460px，与「添加项目」一致） */
+.settings-dialog {
+  width: 460px;
+}
+
+/* 设置项下方的小字说明（英文，新功能 UI 约定） */
+.settings-hint {
+  margin-top: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+}

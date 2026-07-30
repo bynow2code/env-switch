@@ -303,6 +303,113 @@ function getProjectInfo(projectDir, storedActiveEnvFile) {
 }
 
 // 设置文件监控
+// WSL 路径兜底：chokidar 无法可靠监听 Linux 文件系统（Electron 主进程跑在 Windows 侧，
+// 经 \\wsl.localhost 挂载监听不可靠），故改用「定时轮询 + md5 快照比对」：
+//   - 通过 wsl.exe 列举 .env 与所有 .env.*（排除 .env.example），用 readRawFile 读内容算 md5；
+//   - 与上次快照比对，任一文件新增/删除/内容变更都推 env-changed 让前端刷新
+//     （含 md5 实时重算「使用中」高亮）。
+// 封装成带 close() 的对象存入 watchers，复用现有清理逻辑（删项目 / before-quit）。
+// WSL 定时轮询间隔（毫秒），可由「设置」调整；默认值 5000（比 3000 省约 40% 的 wsl.exe 调用、感知延迟仍无感、转圈更舒缓），合法范围 [500, 600000]。
+// 启动即从 data.json 读取已保存值（若存在且合法），否则用默认。运行时保存设置会更新此变量，
+// 并已运行中的 WSL 轮询器会被重建以套用新间隔（见 PUT /api/settings）。
+let wslPollInterval = 5000;
+try {
+  const _initData = loadData();
+  if (typeof _initData.wslPollInterval === 'number' && _initData.wslPollInterval >= 500 && _initData.wslPollInterval <= 600000) {
+    wslPollInterval = Math.floor(_initData.wslPollInterval);
+  }
+} catch (_e) {}
+
+function setupWslPoller(projectId, projectDir) {
+  const parsed = parseWslPath(projectDir);
+  if (!parsed) {
+    log(`[WATCHER] WSL 路径解析失败，跳过轮询 ${projectDir}`);
+    return;
+  }
+  log(`[WATCHER] WSL 路径，改用定时轮询（${wslPollInterval}ms）${projectDir}`);
+
+  // 采集当前快照：{ 文件名: md5 }（含 .env 与所有 .env.xxx，排除 .env.example）
+  // 文件不存在/读不到时记为 '__missing__'，便于检测「被删除」与内容变更区分。
+  function snapshot() {
+    const map = {};
+    // 复用与 getProjectInfo 一致的列举方式（wsl.exe + ls）
+    const cmd = `wsl.exe -d ${parsed.distro} sh -c "ls -1a ${parsed.linuxPath}/.env.* 2>/dev/null || true"`;
+    let files = [];
+    try {
+      const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
+      if (output) {
+        files = output.split('\n')
+          .map(f => f.trim().split('/').pop())
+          .filter(f => f && f.startsWith('.env.') && f !== '.env.example');
+      }
+    } catch (e) {
+      // 列举失败：保持空列表，下一轮重试
+    }
+    // 候选 = .env 本体 + 各 .env.xxx
+    const candidates = ['.env', ...files];
+    for (const f of candidates) {
+      const content = readRawFile(path.join(projectDir, f)); // readRawFile 兼容 WSL 路径
+      map[f] = content === '' ? '__missing__' : crypto.createHash('md5').update(content).digest('hex');
+    }
+    return map;
+  }
+
+  let prev = null;
+  let stopped = false;
+
+  // 本轮轮询检查结束：通知前端该卡片停转圈。
+  // 延迟 500ms 才 emit，保证旋转动画在界面上可见（实际检查是同步 execSync，耗时极短，
+  // 若不延迟前端几乎看不到转圈）；用 setTimeout 非阻塞，并在回调内检查 stopped，
+  // 避免项目已被删 / watcher 已关闭后仍向前端发事件。
+  function endCheck() {
+    if (!io) return;
+    // 注意：此处刻意不检查 stopped。原因——若本 poller 在「已 emit env-checking、尚未 emit env-checked」
+    // 期间被外部重建（例如用户在「设置」里改了 WSL 间隔，PUT /api/settings 会 close 旧 poller 再新建），
+    // 旧的 stopped 会被置 true，从而把这次 env-checked 吞掉，前端 wslChecking[id] 永久为 true → 卡片卡在转圈。
+    // 因此无论如何都把 env-checked 发出来让前端停转圈；多 emit 一次（项目已删 / 已被新 poller 接管）对前端无害（只是置 false）。
+    setTimeout(() => {
+      io.emit('env-checked', { projectId });
+    }, 500);
+  }
+
+  const timer = setInterval(() => {
+    if (stopped) return;
+    // 通知前端：本 WSL 项目开始本轮轮询检查（对应卡片刷新按钮转圈）
+    if (io) io.emit('env-checking', { projectId });
+    let snap;
+    try {
+      snap = snapshot();
+    } catch (e) {
+      log(`[WATCHER] WSL 轮询失败 ${projectDir}: ${e.message}`);
+      endCheck(); // 异常也结束检查态（前端停转圈）
+      return; // 轮询异常不影响下次；保留 prev，避免误判为「变更」
+    }
+    if (prev === null) { prev = snap; endCheck(); return; } // 首轮仅建立基线，不触发变更，但结束检查态
+    // 比对：文件集合变化 或 任一 md5 变化（含缺失标记变化）
+    const keysA = Object.keys(prev).sort().join(',');
+    const keysB = Object.keys(snap).sort().join(',');
+    let changed = keysA !== keysB;
+    if (!changed) {
+      for (const k of Object.keys(snap)) {
+        if (prev[k] !== snap[k]) { changed = true; break; }
+      }
+    }
+    if (changed) {
+      prev = snap;
+      log(`[WATCHER] WSL env 变更（轮询）${projectId}`);
+      const info = getProjectInfo(projectDir);
+      io.emit('env-changed', { projectId, ...info });
+    }
+    endCheck(); // 无论是否变更，本轮检查结束 → 前端停转圈
+  }, wslPollInterval);
+
+  // 封装成带 close() 的对象，复用现有 watchers 清理逻辑（before-quit / 删项目）
+  watchers.set(projectId, {
+    _isWsl: true,
+    close() { stopped = true; clearInterval(timer); }
+  });
+}
+
 function setupWatcher(projectId, projectDir) {
   log(`[WATCHER] 设置监控 projectId=${projectId} ${projectDir}`);
   // 清理旧的 watcher
@@ -317,9 +424,10 @@ function setupWatcher(projectId, projectDir) {
 
   const envPath = path.join(projectDir, '.env');
 
-  // WSL 路径不支持 chokidar 监控，跳过（log 放在 if 内，避免对本地路径误报「WSL 路径」）
+  // WSL 路径：chokidar 无法可靠监听 Linux 文件系统（Electron 跑在 Windows 侧），
+  // 改用定时轮询兜底（见 setupWslPoller）。
   if (isWslPath(projectDir)) {
-    log(`[WATCHER] WSL 路径，跳过文件监控 ${projectDir}`);
+    setupWslPoller(projectId, projectDir);
     return;
   }
 
@@ -429,6 +537,33 @@ async function startServer() {
       envFiles: info.envFiles,
       activeEnvFile: info.activeEnvFile
     });
+  });
+
+  // 设置 —— 读取当前配置（目前仅 WSL 轮询间隔，后续可扩展更多项）
+  expressApp.get('/api/settings', (req, res) => {
+    res.json({ wslPollInterval });
+  });
+
+  // 设置 —— 更新 WSL 轮询间隔并即时生效
+  // 校验：必须是 500–600000 之间的整数（毫秒）；过短会频繁 wsl.exe 调用拖累性能，过长则变更感知延迟。
+  expressApp.put('/api/settings', (req, res) => {
+    const raw = req.body && req.body.wslPollInterval;
+    const val = Number(raw);
+    if (!Number.isFinite(val) || !Number.isInteger(val) || val < 500 || val > 600000) {
+      return res.status(400).json({ error: 'Interval must be an integer between 500 and 600000 ms.' });
+    }
+    const data = loadData();
+    data.wslPollInterval = val;
+    saveData(data);
+    wslPollInterval = val; // 更新运行中变量：后续新建的轮询器立即用新值
+    // 重建所有 WSL 项目的轮询器，使新间隔立即生效（setupWatcher 会先关闭旧的再建新的）
+    for (const p of data.projects) {
+      if (isWslPath(p.dir)) {
+        try { setupWatcher(p.id, p.dir); } catch (e) { log(`[SERVER] 重启 WSL 轮询失败 ${p.id}: ${e.message}`); }
+      }
+    }
+    log(`[SERVER] WSL 轮询间隔已更新为 ${val}ms`);
+    res.json({ wslPollInterval: val });
   });
 
   expressApp.post('/api/projects', (req, res) => {
