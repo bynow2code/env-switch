@@ -244,9 +244,8 @@ function getProjectInfo(projectDir) {
     }
     if (files) {
       for (const file of files) {
-        const name = typeof file === 'string' ? file : file;
-        if (name.startsWith('.env.') && name !== '.env.example') {
-          envFiles.push(name);
+        if (file.startsWith('.env.') && file !== '.env.example') {
+          envFiles.push(file);
         }
       }
     }
@@ -277,16 +276,16 @@ function setupWatcher(projectId, projectDir) {
 
   const envPath = path.join(projectDir, '.env');
 
-  // WSL 路径不支持 chokidar 监控，跳过
-  log(`[WATCHER] WSL 路径，跳过文件监控 ${projectDir}`);
+  // WSL 路径不支持 chokidar 监控，跳过（log 放在 if 内，避免对本地路径误报「WSL 路径」）
   if (isWslPath(projectDir)) {
+    log(`[WATCHER] WSL 路径，跳过文件监控 ${projectDir}`);
     return;
   }
 
   // 只监控文件，如果 .env 是目录则跳过
-      log(`[WATCHER] envPath 是目录，跳过 ${envPath}`);
   try {
     if (fs.existsSync(envPath) && fs.statSync(envPath).isDirectory()) {
+      log(`[WATCHER] envPath 是目录，跳过 ${envPath}`);
       return;
     }
   } catch (e) {
@@ -579,10 +578,10 @@ async function createWindow() {
     // 居中放置后，窗口外侧两侧大片桌面背景，截图看起来像"窗口两边大量空白"。
     // 改大到 1500×900：CSS 的 .app width:100% + .project-list grid auto-fill
     // 会自动在更大空间里铺满（grid 实际本来就铺满窗口，问题只是窗口本身偏小）。
-    width: 1500,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
+    width: 1200,
+    height: 720,
+    minWidth: 900,
+    minHeight: 600,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -658,8 +657,8 @@ function initAutoUpdater() {
   });
 
   // 开发模式（未打包）：不连 GitHub，注册桩 handler，让前端走「dev mode」提示分支
-    log('[UPDATE] 开发模式：跳过真实更新检查（打包后才会真正连 GitHub）');
   if (!app.isPackaged) {
+    log('[UPDATE] 开发模式：跳过真实更新检查（打包后才会真正连 GitHub）');
     ipcMain.handle('app:check-updates', async () => {
       if (mainWindow) {
         mainWindow.webContents.send('update-event', {

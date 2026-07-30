@@ -6,7 +6,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background: #f0f2f5;
+  background: #f8fafc;
   color: #1a1a2e;
   min-height: 100vh;
 }
@@ -24,44 +24,22 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;            /* 只剩操作按钮组，贴右对齐（GitHub/VS Code 等工具栏惯例） */
   gap: 10px;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid #e8ecf1;
+  margin-bottom: 14px;                  /* 与下方内容稍多呼吸 */
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f1f5f9;     /* 弱化分隔线（去掉 logo 后不再需要 2px 强调） */
 }
 
-/* 左侧：logo + 副标题；右侧：操作按钮组。space-between 让两组分别贴边，
-   替代原先的 .app-header-spacer 占位元素（已删除，纯死 CSS）。 */
-.app-header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
+/* 左侧 logo + 副标题已删除（与右下操作按钮组视觉重量严重失衡），只剩右组按钮 */
 .app-header-right {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-/* logo 用基础样式覆盖浏览器默认 h1（约 2em 大粗体），与副标题基线对齐 */
-.app-logo {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1a1a2e;
-  margin: 0;
-  line-height: 1;
-}
-
-.app-header .subtitle {
-  font-size: 13px;
-  color: #9ca3af;
-}
-
 /* 头部按钮统一规范：相同高度、相同圆角、相同字号字重、相同颜色，
    仅在「填充/描边/纯图标」上做层级区分，强化一组按钮的视觉统一 */
-.btn-add,
 .btn-icon {
   height: 36px;
   border-radius: 8px;
@@ -73,28 +51,15 @@ body {
   line-height: 1;
 }
 
-.btn-add:active,
 .btn-icon:active {
   transform: translateY(1px);
 }
 
-.btn-add:disabled,
 .btn-icon:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-/* + 添加项目：实心主按钮 */
-.btn-add {
-  padding: 0 18px;
-  background: #4f46e5;
-  color: #fff;
-  border: 1.5px solid #4f46e5;
-}
-.btn-add:hover:not(:disabled) {
-  background: #4338ca;
-  border-color: #4338ca;
-}
 
 /* 关于：纯图标方按钮，与右两个按钮同高 36px、同色、同圆角，对齐视觉语言 */
 .btn-icon {
@@ -137,7 +102,10 @@ body {
 
 /* Update modal */
 .update-dialog {
-  width: 440px;
+  /* 从 440px 调到 520px：原尺寸在 dev 模式错误提示文本（"Running in dev mode. Auto-update
+     only works in packaged builds." ≈63 字符）下需 2 行才放得下，截图里明显偏挤。
+     520px 比 App Info 弹窗的 580px 略小（更新内容通常更短，无需同样宽），但保留对话节奏。 */
+  width: 520px;
 }
 
 .update-body {
@@ -501,8 +469,8 @@ body {
 .btn-delete {
   padding: 3px 8px;
   background: transparent;
-  color: #ef4444;
-  border: 1px solid #fecaca;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
@@ -511,8 +479,8 @@ body {
 }
 
 .btn-delete:hover {
-  background: #fef2f2;
-  border-color: #ef4444;
+  background: #f8fafc;
+  border-color: #cbd5e1;
 }
 
 .project-actions {
@@ -561,12 +529,32 @@ body {
   background: #ffffff;
   border: 1px solid #f3f4f6;
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 9px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
   min-width: 0;
 }
+
+/* 单行 chip 布局：当前配置以「key 灰字 + value 徽标」成对流动，中间用 · 分隔 */
+.env-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.env-k {
+  font-size: 11px;
+  font-weight: 700;                /* 与 .env-label 和 .env-badge 同字重，三者视觉节奏统一 */
+  color: #9ca3af;
+  /* 改用与 .env-label 一致的 sans-serif：原 monospace Consolas 的 Latin uppercase 视觉中心
+     与 Chinese 字符（全 em box）不同，会导致当前 vs APP_NAME baseline 错位（截图）。 */
+  letter-spacing: 0.4px;
+}
+
+/* 原 .env-sep（中间灰点 · 分隔）已删除：用户在截图里把"·"误以为是噪声/伪影，
+   视觉上反而让布局显得零碎。两个 env-pair 之间的 8px gap 已经足够分隔。 */
 
 .env-label {
   /* "当前配置" / "环境配置切换" 等区块小标题 */
@@ -576,30 +564,6 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin: 0;
-}
-
-.env-values {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 12px;
-  row-gap: 6px;
-  align-items: center;
-  min-width: 0;
-}
-
-/* display: contents：.env-item 不再生成盒子，key/value 直接挂到 .env-values 网格列。
-   杜绝嵌套 flex 在窄卡片下把徽标拉伸成竖条的怪异现象。 */
-.env-item {
-  display: contents;
-}
-
-.env-key {
-  font-size: 11px;
-  font-weight: 600;
-  color: #9ca3af;
-  font-family: 'Consolas', 'Monaco', monospace;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
 }
 
 .env-value {
@@ -632,13 +596,13 @@ body {
   border-radius: 12px;
   font-size: 12px;
   font-weight: 700;
-  background: #f1f5f9;
-  color: #475569;
+  background: #eef2ff;          /* 浅紫底（P2 视觉层次）：与全局主色紫蓝 #4f46e5 同色系，比中性灰 #f1f5f9 更有"这是带语义的徽标"的归属感 */
+  color: #4338ca;               /* 深紫蓝字，与浅紫底形成柔和对比，可读性优于原 #475569 */
 }
 
 /* 徽标语义色块（dev/prod/staging/test/local 等）已统一删除：
    卡片内 APP_NAME 与 APP_ENV 两个徽标并排，需要视觉一致；
-   统一走 .env-badge 基础中性灰（#f1f5f9 底 / #475569 字），
+   统一走 .env-badge 基础浅紫底（#eef2ff 底 / #4338ca 字），
    避免因 env class 触发语义色导致两个徽标一灰一蓝、互不协调。
    如未来需在别处独立展示环境徽标并希望区分语义色，可在此恢复并加注释。 */
 
@@ -680,15 +644,25 @@ body {
 }
 
 .btn-switch {
-  padding: 4px 12px;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   background: #4f46e5;
   color: #fff;
   border: none;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.2s;
+}
+
+/* 切换中：小圆点占位，避免箭头在加载态闪烁 */
+.btn-switch .switch-dots {
+  font-size: 16px;
+  line-height: 1;
 }
 
 .btn-switch:hover {
@@ -696,12 +670,12 @@ body {
 }
 
 .btn-switch:disabled {
-  background: #9ca3af;
+  background: #c7cbd1;
   cursor: not-allowed;
 }
 
 .btn-switch.switching {
-  background: #9ca3af;
+  background: #c7cbd1;
 }
 
 .env-files-empty {
@@ -723,7 +697,11 @@ body {
    App Info 关于弹窗（参考 easy-ops 的 App Info 实现）
    ============================================================ */
 .info-dialog {
-  width: 440px;
+  /* 调到 580px：原 440px 在 1200px 窗口里本身就偏小，且典型 Windows 路径
+     (C:\Users\xxx\AppData\Roaming\env-switch\data.json ≈ 49 字符) 在 440px 下
+     必须换行（截图）。580px ≈ 容下 60+ 字符路径不换行，仍比 1200 窗口宽度的一半小，
+     视觉上仍是"弹窗"而非"侧边栏"，左右两侧各保留 ~310px 留白。 */
+  width: 580px;
 }
 
 .info-body {

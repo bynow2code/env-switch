@@ -106,24 +106,21 @@ function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) 
       </div>
 
       <div className="env-current">
-        <div className="env-label">当前配置</div>
-        <div className="env-values">
-          <div className="env-item">
-            <span className="env-key">APP_NAME</span>
-            <span className="env-value env-badge">{project.appName || <em>未设置</em>}</span>
-          </div>
-          <div className="env-item">
-            <span className="env-key">APP_ENV</span>
-            <span className={`env-value env-badge ${project.appEnv || ''}`}>
-              {project.appEnv || <em>未设置</em>}
-            </span>
-          </div>
-        </div>
+        <span className="env-label">当前</span>
+        <span className="env-pair">
+          <span className="env-k">APP_NAME</span>
+          <span className="env-value env-badge">{project.appName || <em>未设置</em>}</span>
+        </span>
+        <span className="env-pair">
+          <span className="env-k">APP_ENV</span>
+          <span className={`env-value env-badge ${project.appEnv || ''}`}>
+            {project.appEnv || <em>未设置</em>}
+          </span>
+        </span>
       </div>
 
       {project.envFiles.length > 0 && (
         <div className="env-files">
-          <div className="env-label">环境配置切换</div>
           <div className="env-file-list">
             {project.envFiles.map(file => {
               const isSwitching = switching[project.id] === file
@@ -134,8 +131,16 @@ function SortableProjectCard({ project, onRequestDelete, onSwitch, switching }) 
                     className={`btn-switch ${isSwitching ? 'switching' : ''}`}
                     onClick={() => onSwitch(project.id, file)}
                     disabled={!!switching[project.id]}
+                    title="切换到该环境"
                   >
-                    {isSwitching ? '切换中...' : '切换'}
+                    {isSwitching ? (
+                      <span className="switch-dots">…</span>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                        <polyline points="12 5 19 12 12 19" />
+                      </svg>
+                    )}
                   </button>
                 </div>
               )
@@ -425,16 +430,11 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="app-header-left">
-          <h1 className="app-logo">EnvSwitch</h1>
-          <span className="subtitle">ENV 配置管理工具</span>
-        </div>
         <div className="app-header-right">
-          <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
+          <button className="btn-icon" onClick={() => setShowAddDialog(true)} title="添加项目">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="16" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12.01" y2="8" />
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
           <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击下载' : '检查更新'} disabled={updateState === 'checking'}>
@@ -445,8 +445,12 @@ function App() {
             </svg>
             {updateState === 'downloaded' && <span className="update-badge">!</span>}
           </button>
-          <button className="btn-add" onClick={() => setShowAddDialog(true)}>
-            + 添加项目
+          <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
           </button>
         </div>
       </header>
@@ -536,7 +540,18 @@ function App() {
                 <div>
                   <p>发现新版本 <strong>v{updateInfo.version}</strong>。</p>
                   {updateInfo.releaseNotes && (
-                    <pre className="update-notes">{typeof updateInfo.releaseNotes === 'string' ? updateInfo.releaseNotes : JSON.stringify(updateInfo.releaseNotes)}</pre>
+                    // 渲染 GitHub release notes 的 HTML（p/ul/li/a/strong 等），不是纯文本。
+                    // 来源是 electron-updater / 自研 mac 更新器拉的 bynow2code/env-switch 官方 Release notes，
+                    // 个人工具、可信源，dangerouslySetInnerHTML 注入风险可接受；子元素样式见 .update-notes *。
+                    // electron-updater 偶尔把 releaseNotes 给成对象（含 .default），兜底取 .default 或 JSON。
+                    <div
+                      className="update-notes"
+                      dangerouslySetInnerHTML={{
+                        __html: typeof updateInfo.releaseNotes === 'string'
+                          ? updateInfo.releaseNotes
+                          : (updateInfo.releaseNotes?.default || JSON.stringify(updateInfo.releaseNotes))
+                      }}
+                    />
                   )}
                   <p className="update-hint">是否下载并安装此更新？</p>
                 </div>
@@ -558,7 +573,10 @@ function App() {
               {updateState === 'error' && (
                 <div>
                   <p className="update-error-text">更新检查失败:</p>
-                  <pre className="update-notes">{updateError}</pre>
+                  {/* 用 <div> 不用 <pre>：<pre> 默认 white-space:pre 会让错误文本溢出产生横向滚动条
+                     （截图里"Running in dev mode..."被截断带 ◀▶），错误信息是普通文本，不需要 pre 的预格式语义，
+                     改为 div 后 .update-notes 的 word-break:break-word 生效，自然换行。 */}
+                  <div className="update-notes">{updateError}</div>
                 </div>
               )}
             </div>
@@ -590,6 +608,14 @@ function App() {
                 <label>Version</label>
                 <div className="info-value">v{appInfo?.version || appVersion}</div>
               </div>
+              {appInfo?.repoUrl && (
+                <div className="info-row">
+                  <label>Source</label>
+                  <div className="info-value">
+                    <a className="info-link" href={appInfo.repoUrl} target="_blank" rel="noreferrer">GitHub</a>
+                  </div>
+                </div>
+              )}
               <div className="info-row">
                 <label>Mode</label>
                 <div className="info-value">{appInfo?.isDev ? 'Development' : 'Production'}</div>
@@ -609,14 +635,6 @@ function App() {
                   <div className="info-path">
                     <span className="info-path-text">{appInfo.logFilePath}</span>
                     <button className="btn-copy" onClick={() => copyText(appInfo.logFilePath)}>Copy</button>
-                  </div>
-                </div>
-              )}
-              {appInfo?.repoUrl && (
-                <div className="info-row">
-                  <label>Source</label>
-                  <div className="info-value">
-                    <a className="info-link" href={appInfo.repoUrl} target="_blank" rel="noreferrer">GitHub</a>
                   </div>
                 </div>
               )}
