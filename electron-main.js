@@ -238,9 +238,11 @@ function parseEnvFile(filePath) {
 }
 
 // 获取项目信息
-// storedActiveEnvFile：data.json 里持久化的"上次选中配置"（切换时写入）。
-//   仅作为 md5 失配时的兜底；正常情况下以 md5 实时比对 .env 与各 .env.xxx 为准（见函数内实现）。
-function getProjectInfo(projectDir, storedActiveEnvFile) {
+// 当前在用配置：严格用 md5 实时比对 .env 与各 .env.xxx 判定（见下方实现）。
+// 不读 data.json 的"上次选择"做兜底——否则当用户手动改 .env 使其与所有源文件都不一致时，
+// 仍会被旧记录强行标成「使用中」，造成"内容不一样却显示使用中"的假阳性。
+// 切换/重新套用按钮在每行常驻，用户可随时重新套用，故无需该兜底。
+function getProjectInfo(projectDir) {
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
   log(`[PROJECT] 读取项目信息 ${projectDir}`);
@@ -281,16 +283,13 @@ function getProjectInfo(projectDir, storedActiveEnvFile) {
     log(`[PROJECT] 获取项目信息失败: ${e.message}`);
   }
 
-  // 当前在用配置：严格按照 md5 实时比对 .env 与各 .env.xxx 的原始内容判定。
+  // 当前在用配置：严格用 md5 实时比对 .env 与各 .env.xxx 的原始内容判定。
   // 切换时 .env 是源文件的逐字节拷贝（本地 readFileSync→writeFileSync / WSL wsl.exe cp），
-  // 故 md5 完全一致、能精确命中；
-  // 只有当 md5 完全失配（如手动改过 .env、或源文件被外部改动）时，
-  // 才回退到持久化的上次选择（data.json 的 activeEnvFile），让对应行仍可高亮、
-  // 且切换按钮保留以便一键重新套用。其余情况（从未切换 + 手动 .env）不高亮任何行，保持诚实。
-  let activeEnvFile = getActiveEnvFile(projectDir, envFiles);
-  if (!activeEnvFile && storedActiveEnvFile && envFiles.includes(storedActiveEnvFile)) {
-    activeEnvFile = storedActiveEnvFile;
-  }
+  // 故 md5 完全一致才能命中；
+  // 一旦 .env 与所有 .env.xxx 都不一致（手动改过 .env、或源文件被外部改动），
+  // 则返回空串、不高亮任何行——这是真实状态，保持诚实。
+  // 注意：不回退到 data.json 的"上次选择"，否则会制造"内容不一样却显示使用中"的假阳性。
+  const activeEnvFile = getActiveEnvFile(projectDir, envFiles);
 
   return {
     appName: envVars['APP_NAME'] || '',
@@ -507,7 +506,7 @@ async function startServer() {
   expressApp.get('/api/projects', (req, res) => {
     const data = loadData();
     const projects = data.projects.map(p => {
-      const info = getProjectInfo(p.dir, p.activeEnvFile);
+      const info = getProjectInfo(p.dir);
       return {
         id: p.id,
         name: p.name,
@@ -526,7 +525,7 @@ async function startServer() {
     const project = data.projects.find(p => p.id === req.params.id);
     if (!project) return res.status(404).json({ error: '项目不存在' });
 
-    const info = getProjectInfo(project.dir, project.activeEnvFile);
+    const info = getProjectInfo(project.dir);
     res.json({
       id: project.id,
       name: project.name,
@@ -686,12 +685,10 @@ async function startServer() {
         }
       }
 
-      // 持久化"当前选中配置"：把刚切换到的文件名写入 data.json，
-      // 这样即使之后手动改了 .env、或重启应用，选中高亮依然稳定（不依赖内容比对）。
-      project.activeEnvFile = envFileName;
-      saveData(data);
+      // 「当前选中配置」以 md5 实时比对为准（见 getProjectInfo），不再持久化到 data.json，
+      // 避免手动改 .env 后旧记录仍被强行标成「使用中」。
 
-      const info = getProjectInfo(project.dir, project.activeEnvFile);
+      const info = getProjectInfo(project.dir);
       io.emit('env-changed', { projectId: project.id, ...info });
       log(`[SERVER] 环境切换成功 ${project.id} -> ${envFileName}`);
       res.json({
