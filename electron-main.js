@@ -6,11 +6,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const chokidar = require('chokidar');
-const { execSync, execFile } = require('child_process');
+const { execSync, exec } = require('child_process');
 const { promisify } = require('util');
-// 用 execFile（而非 exec）：execFile 支持数组形式 args 且不经 shell 解析，
-// 既能绕过 Windows cmd.exe 对单引号的破坏，又能把参数原样传递给 wsl.exe。
-const execFileAsync = promisify(execFile); // 异步执行，避免 wsl.exe 轮询阻塞主线程
+const execAsync = promisify(exec); // 异步 exec（字符串形式，经 cmd.exe）。WSL 轮询只用来做一次极简「ls 列举」
+//   —— 与最初能跑通的旧代码（execSync 字符串形式）走同一条 cmd.exe 路径，只是改为异步不阻塞主线程。
+//   注意：复杂脚本 / execFile 数组形式调 wsl.exe 在本机实测均失败（空 stdout / Command failed），故一律不用。
 const crypto = require('crypto');
 
 // 先固定「真实的」userData 路径：下方开发模式会把 userData 重定向到临时缓存目录以解决
@@ -165,23 +165,16 @@ function wslCopyFile(sourcePath, targetPath) {
 }
 
 // 通过 wsl.exe 读取文件内容（用于 WSL 路径）
-function wslReadFile(filePath) {
-  const parsed = parseWslPath(filePath);
-  if (!parsed) throw new Error('无法解析 WSL 路径');
-  const cmd = `wsl.exe -d ${parsed.distro} cat "${parsed.linuxPath}"`;
-  log(`[WSL] read ${filePath}`);
-  return execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
-}
-
 // 判断是否为 WSL 路径
 function isWslPath(filePath) {
   return /^\\\\wsl(?:\.localhost)?\\/i.test(filePath);
 }
 
-// 读取文件原始内容（兼容 WSL 路径），读不到返回空串
+// 读取文件原始内容（兼容 WSL 路径）：统一直接用 Windows UNC 路径（\\wsl.localhost\...）的 fs 读取，
+//   由 Windows 内核 9P 文件系统原生提供，0 额外子进程、最快，无需 wsl.exe cat 兜底。
+// 读不到（路径不存在/无权限）返回空串。这是读取 WSL 文件的唯一方案。
 function readRawFile(fp) {
   try {
-    if (isWslPath(fp)) return wslReadFile(fp)
     return fs.readFileSync(fp, 'utf-8')
   } catch (e) {
     return ''
@@ -196,11 +189,20 @@ function getActiveEnvFile(projectDir, envFiles) {
   if (!envFiles || envFiles.length === 0) return ''
   const envHash = crypto.createHash('md5').update(readRawFile(path.join(projectDir, '.env'))).digest('hex')
   if (!envHash) return '' // .env 不存在或读不到
+  // 收集所有 md5 与 .env 一致的文件：内容完全相同的多个 .env.xxx 会全部命中，
+  // 此时单靠 md5 无法区分是哪一个，需要用「文件名」进一步决胜负。
+  const matches = []
   for (const f of envFiles) {
     const h = crypto.createHash('md5').update(readRawFile(path.join(projectDir, f))).digest('hex')
-    if (h && h === envHash) return f
+    if (h && h === envHash) matches.push(f)
   }
-  return ''
+  if (matches.length === 0) return ''           // 无内容匹配 → 不高亮（诚实，绝不假阳性）
+  if (matches.length === 1) return matches[0]   // 唯一匹配 → 直接返回
+  // 多个文件内容相同：用「上次切换到的文件名」(data.json 的 activeEnvFile) 决胜负，
+  // 且仅当它确实在匹配列表内才采用 —— 永不参与"无匹配时兜底"，故不会造成假阳性。
+  const stored = ((loadData().projects || []).find(p => p.dir === projectDir) || {}).activeEnvFile || ''
+  if (stored && matches.includes(stored)) return stored
+  return matches[0] // 兜底：返回第一个匹配（仍是 md5 命中，不会假阳性）
 }
 
 // 解析 .env 文件内容为键值对
@@ -208,18 +210,9 @@ function parseEnvFile(filePath) {
   const result = {};
   try {
     let content;
-    if (isWslPath(filePath)) {
-      try {
-        content = wslReadFile(filePath);
-      } catch (e) {
-        // 文件不存在或读取失败，返回空
-        return result;
-      }
-    } else {
-      if (!fs.existsSync(filePath)) return result;
-      content = fs.readFileSync(filePath, 'utf-8');
-      log(`[FILE] 解析 ${filePath}`);
-    }
+    if (!fs.existsSync(filePath)) return result;
+    content = fs.readFileSync(filePath, 'utf-8');
+    log(`[FILE] 解析 ${filePath}`);
     const lines = content.split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
@@ -242,10 +235,12 @@ function parseEnvFile(filePath) {
 }
 
 // 获取项目信息
-// 当前在用配置：严格用 md5 实时比对 .env 与各 .env.xxx 判定（见下方实现）。
-// 不读 data.json 的"上次选择"做兜底——否则当用户手动改 .env 使其与所有源文件都不一致时，
-// 仍会被旧记录强行标成「使用中」，造成"内容不一样却显示使用中"的假阳性。
-// 切换/重新套用按钮在每行常驻，用户可随时重新套用，故无需该兜底。
+// 当前在用配置判定（见 getActiveEnvFile）：
+//   - 主匹配：md5 实时比对 .env 与各 .env.xxx 的原始内容。
+//   - 决胜负：当多个 .env.xxx 内容完全相同（md5 一致）时，用 data.json 持久化的
+//     "上次切换文件名"(activeEnvFile) 选中所切的那个——仅在该文件确实在匹配列表内才生效。
+//   - 诚实：若 .env 与所有源文件 md5 都不一致（手动改过 .env），返回 '' 不高亮，绝不假阳性。
+// 切换/重新套用按钮在每行常驻，用户可随时重新套用。
 function getProjectInfo(projectDir) {
   const envPath = path.join(projectDir, '.env');
   const envVars = parseEnvFile(envPath);
@@ -351,44 +346,35 @@ function setupWslPoller(projectId, projectDir) {
   // 这里用异步 exec（而非 execSync），不阻塞主进程事件循环。
   // 文件缺失记为 '__missing__'，便于区分「被删除」与「内容变更」。wsl.exe 整体失败返回 null，
   // 由调用方保留上一轮快照、不误触发变更。
+  // 极简快照：wsl.exe 只做「列举 .env.* 文件名」一件事（与最初能跑通的旧代码同一 sh -c "ls" 模式，
+  //   经 cmd.exe 双引号、无复杂脚本），文件内容和 md5 全部在 Node 侧算（直接读 \\wsl.localhost\ UNC 路径）。
+  // 这样彻底绕开了「把脚本塞进 wsl.exe 命令行参数」这条路——它在本机实测多次失败（空 stdout / Command failed）。
   async function snapshot() {
-    const safePath = parsed.linuxPath;
-    const script =
-      `cd "${safePath}" 2>/dev/null || exit 0; ` +
-      `files=".env"; files="$files $(ls -1a .env.* 2>/dev/null | grep -E "^\\.env\\." | grep -vxF .env.example)"; ` +
-      `for f in $files; do ` +
-        `if [ -f "$f" ]; then h=$(md5sum "$f" 2>/dev/null | cut -d " " -f1); ` +
-        `[ -z "$h" ] && h="__missing__"; printf "%s|%s\\n" "$f" "$h"; ` +
-        `else printf "%s|__missing__\\n" "$f"; fi; ` +
-      `done`;
-    // 通过 stdin 把脚本喂给 wsl.exe bash（最稳健方案，彻底绕开"参数传脚本"的所有坑）：
-    //   - 用 execFile 数组形式调用 `wsl.exe -d <distro> bash -s`，脚本由 options.input 写入子进程 stdin
-    //   - 不经 cmd.exe、不依赖任何引号转义、不把脚本塞进命令行参数（避免 wsl.exe 对数组参数返回空 stdout）
-    //   - bash -s 显式从 stdin 读取命令执行，脚本内容原样传入，无任何 shell 解释环节
-    let output;
+    const { distro, linuxPath } = parsed;
+    const listCmd = `wsl.exe -d ${distro} sh -c "ls -1a ${linuxPath}/.env.* 2>/dev/null || true"`;
+    let files = [];
     try {
-      const { stdout } = await execFileAsync('wsl.exe', ['-d', parsed.distro, 'bash', '-s'], {
-        input: script,
-        encoding: 'utf-8', timeout: 8000, maxBuffer: 4 * 1024 * 1024, windowsHide: true,
+      const { stdout } = await execAsync(listCmd, {
+        encoding: 'utf-8', timeout: 8000, maxBuffer: 1024 * 1024, windowsHide: true,
       });
-      output = stdout || '';
-      // 诊断：打印 raw stdout 长度和前 200 字符（验证轮询是否真正返回数据）
-      log(`[WATCHER] WSL 快照 raw stdout ${projectId}: len=${output.length}, head=${JSON.stringify(output.slice(0, 200))}`);
+      if (stdout) {
+        files = stdout.split('\n')
+          .map(f => f.trim().split('/').pop())
+          .filter(f => f && f.startsWith('.env.') && f !== '.env.example');
+      }
+      log(`[WATCHER] WSL 列举 ${projectId}: rawLen=${stdout.length}, files=${JSON.stringify(files)}`);
     } catch (e) {
-      log(`[WATCHER] WSL 轮询命令失败 ${projectDir}: ${e.message}`);
+      log(`[WATCHER] WSL 列举失败 ${projectDir}: ${e.message}`);
       return null; // 本轮失败：保留 prev，不误判变更
     }
+    // 候选 = .env 本体 + 各 .env.xxx；内容直接读 UNC 路径、md5 在 Node 侧算（0 额外 wsl.exe 调用）
+    const candidates = ['.env', ...files];
     const map = {};
-    log(`[WATCHER] WSL 快照成功 ${projectId}: 收到 ${output.split('\n').filter(Boolean).length} 行`);
-    for (const line of output.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      const idx = t.indexOf('|');
-      if (idx === -1) continue;
-      const name = t.slice(0, idx);
-      const hash = t.slice(idx + 1) || '__missing__';
-      if (name) map[name] = hash;
+    for (const f of candidates) {
+      const content = readRawFile(path.join(projectDir, f)); // projectDir 已是 \\wsl.localhost\... 形式，直接 fs 读 UNC 路径
+      map[f] = content === '' ? '__missing__' : crypto.createHash('md5').update(content).digest('hex');
     }
+    log(`[WATCHER] WSL 快照成功 ${projectId}: ${candidates.length} 个候选`);
     return map;
   }
 
@@ -748,8 +734,11 @@ async function startServer() {
         }
       }
 
-      // 「当前选中配置」以 md5 实时比对为准（见 getProjectInfo），不再持久化到 data.json，
-      // 避免手动改 .env 后旧记录仍被强行标成「使用中」。
+      // 持久化「上次切换到的文件名」(data.json 的 activeEnvFile)：仅作为 getActiveEnvFile 中
+      // 「多个 .env.xxx 内容相同」时的决胜负依据，不参与"无 md5 匹配时兜底"，
+      // 故手动改 .env 后（md5 无匹配）仍不高亮，不会假阳性。
+      project.activeEnvFile = envFileName;
+      saveData(data);
 
       const info = getProjectInfo(project.dir);
       io.emit('env-changed', { projectId: project.id, ...info });
