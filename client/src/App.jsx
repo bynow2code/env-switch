@@ -292,7 +292,7 @@ function App() {
   }, [loadProjects])
 
   // 单卡片刷新：走 /api/projects/:id 拉取该卡片最新数据（本地项目手动即时刷新；
-  // WSL 项目也可借此立即触发一次检查，不必等 3 秒轮询）。仅该卡片转圈。
+  // WSL 项目也可借此立即触发一次检查，不必等轮询周期）。仅该卡片转圈。
   const refreshCard = useCallback(async (projectId) => {
     setCardRefreshing(prev => ({ ...prev, [projectId]: true }))
     try {

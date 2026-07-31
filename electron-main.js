@@ -6,7 +6,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const chokidar = require('chokidar');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+// 用 execFile（而非 exec）：execFile 支持数组形式 args 且不经 shell 解析，
+// 既能绕过 Windows cmd.exe 对单引号的破坏，又能把参数原样传递给 wsl.exe。
+const execFileAsync = promisify(execFile); // 异步执行，避免 wsl.exe 轮询阻塞主线程
 const crypto = require('crypto');
 
 // 先固定「真实的」userData 路径：下方开发模式会把 userData 重定向到临时缓存目录以解决
@@ -304,20 +308,34 @@ function getProjectInfo(projectDir) {
 // 设置文件监控
 // WSL 路径兜底：chokidar 无法可靠监听 Linux 文件系统（Electron 主进程跑在 Windows 侧，
 // 经 \\wsl.localhost 挂载监听不可靠），故改用「定时轮询 + md5 快照比对」：
-//   - 通过 wsl.exe 列举 .env 与所有 .env.*（排除 .env.example），用 readRawFile 读内容算 md5；
-//   - 与上次快照比对，任一文件新增/删除/内容变更都推 env-changed 让前端刷新
-//     （含 md5 实时重算「使用中」高亮）。
-// 封装成带 close() 的对象存入 watchers，复用现有清理逻辑（删项目 / before-quit）。
-// WSL 定时轮询间隔（毫秒），可由「设置」调整；默认值 5000（比 3000 省约 40% 的 wsl.exe 调用、感知延迟仍无感、转圈更舒缓），合法范围 [500, 600000]。
-// 启动即从 data.json 读取已保存值（若存在且合法），否则用默认。运行时保存设置会更新此变量，
-// 并已运行中的 WSL 轮询器会被重建以套用新间隔（见 PUT /api/settings）。
-let wslPollInterval = 5000;
+//   - 每个 WSL 项目只需 1 次 wsl.exe 调用：在 Linux 侧用 ls 列举 .env.* 并对每个候选文件 md5sum，
+//     直接返回「文件名|md5」；不再对每个文件各起一次 wsl.exe（旧实现 (1+N) 次同步 execSync，
+//     项目一多主线程被持续阻塞 → 窗口严重卡顿）。
+//   - 用异步 exec（而非 execSync），快照比对不阻塞主进程事件循环。
+//   - 与上次快照比对，任一文件新增/删除/内容变更都推 env-changed 让前端刷新（含 md5 实时重算「使用中」高亮）。
+// 封装成带 close() 的对象存入 watchers，复用现有清理逻辑（删项目 / before-quit / 改设置重建）。
+// WSL 定时轮询间隔（毫秒），可由「设置」调整；默认值 10000（WSL 本就非实时，10s 足够且大幅降低开销），
+// 合法范围 [500, 600000]。启动即从 data.json 读取已保存值（若存在且合法），否则用默认。
+// 运行时保存设置会更新此变量，并已运行中的 WSL 轮询器会被重建以套用新间隔（见 PUT /api/settings）。
+// 为避免大量 WSL 项目在启动瞬间同时触发首轮轮询而瞬时拉起一堆 wsl.exe，每个 poller 按 projectId
+// 稳定错峰启动（见 setupWslPoller 内的 jitter）。
+let wslPollInterval = 10000;
 try {
   const _initData = loadData();
   if (typeof _initData.wslPollInterval === 'number' && _initData.wslPollInterval >= 500 && _initData.wslPollInterval <= 600000) {
     wslPollInterval = Math.floor(_initData.wslPollInterval);
   }
 } catch (_e) {}
+
+// 稳定字符串哈希（用于 WSL 轮询错峰，避免引入第三方依赖）。返回 32 位有符号整数。
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0; // 收敛为 32 位整数
+  }
+  return h;
+}
 
 function setupWslPoller(projectId, projectDir) {
   const parsed = parseWslPath(projectDir);
@@ -327,85 +345,130 @@ function setupWslPoller(projectId, projectDir) {
   }
   log(`[WATCHER] WSL 路径，改用定时轮询（${wslPollInterval}ms）${projectDir}`);
 
-  // 采集当前快照：{ 文件名: md5 }（含 .env 与所有 .env.xxx，排除 .env.example）
-  // 文件不存在/读不到时记为 '__missing__'，便于检测「被删除」与内容变更区分。
-  function snapshot() {
-    const map = {};
-    // 复用与 getProjectInfo 一致的列举方式（wsl.exe + ls）
-    const cmd = `wsl.exe -d ${parsed.distro} sh -c "ls -1a ${parsed.linuxPath}/.env.* 2>/dev/null || true"`;
-    let files = [];
+  // 单次批量快照：在一个 wsl.exe 调用里完成「列举 .env.* + 对 .env 与各 .env.xxx 算 md5」，
+  // 直接由 Linux 侧 md5sum 算好并返回「文件名|md5」，避免在 Windows 端对每个文件各起一次 wsl.exe
+  // （旧实现每项目每轮 (1+N) 次同步 execSync，项目一多主线程被持续阻塞 → 窗口卡顿）。
+  // 这里用异步 exec（而非 execSync），不阻塞主进程事件循环。
+  // 文件缺失记为 '__missing__'，便于区分「被删除」与「内容变更」。wsl.exe 整体失败返回 null，
+  // 由调用方保留上一轮快照、不误触发变更。
+  async function snapshot() {
+    const safePath = parsed.linuxPath;
+    const script =
+      `cd "${safePath}" 2>/dev/null || exit 0; ` +
+      `files=".env"; files="$files $(ls -1a .env.* 2>/dev/null | grep -E "^\\.env\\." | grep -vxF .env.example)"; ` +
+      `for f in $files; do ` +
+        `if [ -f "$f" ]; then h=$(md5sum "$f" 2>/dev/null | cut -d " " -f1); ` +
+        `[ -z "$h" ] && h="__missing__"; printf "%s|%s\\n" "$f" "$h"; ` +
+        `else printf "%s|__missing__\\n" "$f"; fi; ` +
+      `done`;
+    // 通过 stdin 把脚本喂给 wsl.exe bash（最稳健方案，彻底绕开"参数传脚本"的所有坑）：
+    //   - 用 execFile 数组形式调用 `wsl.exe -d <distro> bash -s`，脚本由 options.input 写入子进程 stdin
+    //   - 不经 cmd.exe、不依赖任何引号转义、不把脚本塞进命令行参数（避免 wsl.exe 对数组参数返回空 stdout）
+    //   - bash -s 显式从 stdin 读取命令执行，脚本内容原样传入，无任何 shell 解释环节
+    let output;
     try {
-      const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
-      if (output) {
-        files = output.split('\n')
-          .map(f => f.trim().split('/').pop())
-          .filter(f => f && f.startsWith('.env.') && f !== '.env.example');
-      }
+      const { stdout } = await execFileAsync('wsl.exe', ['-d', parsed.distro, 'bash', '-s'], {
+        input: script,
+        encoding: 'utf-8', timeout: 8000, maxBuffer: 4 * 1024 * 1024, windowsHide: true,
+      });
+      output = stdout || '';
+      // 诊断：打印 raw stdout 长度和前 200 字符（验证轮询是否真正返回数据）
+      log(`[WATCHER] WSL 快照 raw stdout ${projectId}: len=${output.length}, head=${JSON.stringify(output.slice(0, 200))}`);
     } catch (e) {
-      // 列举失败：保持空列表，下一轮重试
+      log(`[WATCHER] WSL 轮询命令失败 ${projectDir}: ${e.message}`);
+      return null; // 本轮失败：保留 prev，不误判变更
     }
-    // 候选 = .env 本体 + 各 .env.xxx
-    const candidates = ['.env', ...files];
-    for (const f of candidates) {
-      const content = readRawFile(path.join(projectDir, f)); // readRawFile 兼容 WSL 路径
-      map[f] = content === '' ? '__missing__' : crypto.createHash('md5').update(content).digest('hex');
+    const map = {};
+    log(`[WATCHER] WSL 快照成功 ${projectId}: 收到 ${output.split('\n').filter(Boolean).length} 行`);
+    for (const line of output.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      const idx = t.indexOf('|');
+      if (idx === -1) continue;
+      const name = t.slice(0, idx);
+      const hash = t.slice(idx + 1) || '__missing__';
+      if (name) map[name] = hash;
     }
     return map;
   }
 
   let prev = null;
   let stopped = false;
+  let inFlight = false; // 防重叠：上一轮未跑完则跳过本轮，避免 wsl.exe 调用堆积
 
   // 本轮轮询检查结束：通知前端该卡片停转圈。
-  // 延迟 500ms 才 emit，保证旋转动画在界面上可见（实际检查是同步 execSync，耗时极短，
-  // 若不延迟前端几乎看不到转圈）；用 setTimeout 非阻塞，并在回调内检查 stopped，
-  // 避免项目已被删 / watcher 已关闭后仍向前端发事件。
+  // 延迟 500ms 才 emit，保证旋转动画在界面上可见（异步快照耗时极短，若不延迟前端几乎看不到转圈）；
+  // 此处刻意不检查 stopped——若 poller 在「已 emit env-checking、尚未 emit env-checked」期间被外部
+  // 重建（如「设置」改了 WSL 间隔会 close 旧 poller 再新建），旧 stopped 置 true 会把这次 env-checked 吞掉，
+  // 前端 wslChecking[id] 永久为 true → 卡片卡在转圈。故无论如何都发出来让前端停转圈（多 emit 一次无害）。
   function endCheck() {
     if (!io) return;
-    // 注意：此处刻意不检查 stopped。原因——若本 poller 在「已 emit env-checking、尚未 emit env-checked」
-    // 期间被外部重建（例如用户在「设置」里改了 WSL 间隔，PUT /api/settings 会 close 旧 poller 再新建），
-    // 旧的 stopped 会被置 true，从而把这次 env-checked 吞掉，前端 wslChecking[id] 永久为 true → 卡片卡在转圈。
-    // 因此无论如何都把 env-checked 发出来让前端停转圈；多 emit 一次（项目已删 / 已被新 poller 接管）对前端无害（只是置 false）。
     setTimeout(() => {
       io.emit('env-checked', { projectId });
     }, 500);
   }
 
-  const timer = setInterval(() => {
-    if (stopped) return;
-    // 通知前端：本 WSL 项目开始本轮轮询检查（对应卡片刷新按钮转圈）
+  // 一轮检查（异步）：先在卡片发 env-checking（转圈），快照比对后按需 emit env-changed，最后 env-checked。
+  // 全程异步（exec），不阻塞主线程；inFlight 防重叠。
+  async function runCheck() {
+    if (stopped || inFlight) return;
+    inFlight = true;
     if (io) io.emit('env-checking', { projectId });
+    // 诊断日志（2026-07-31 排查「轮询没执行」）：每轮打印，确认 setInterval 确实在按间隔触发。
+    log(`[WATCHER] WSL 轮询触发 ${projectId} (interval=${wslPollInterval}ms, distro=${parsed.distro})`);
     let snap;
     try {
-      snap = snapshot();
+      snap = await snapshot();
     } catch (e) {
       log(`[WATCHER] WSL 轮询失败 ${projectDir}: ${e.message}`);
-      endCheck(); // 异常也结束检查态（前端停转圈）
-      return; // 轮询异常不影响下次；保留 prev，避免误判为「变更」
+      inFlight = false;
+      endCheck();
+      return;
     }
-    if (prev === null) { prev = snap; endCheck(); return; } // 首轮仅建立基线，不触发变更，但结束检查态
-    // 比对：文件集合变化 或 任一 md5 变化（含缺失标记变化）
-    const keysA = Object.keys(prev).sort().join(',');
-    const keysB = Object.keys(snap).sort().join(',');
-    let changed = keysA !== keysB;
-    if (!changed) {
-      for (const k of Object.keys(snap)) {
-        if (prev[k] !== snap[k]) { changed = true; break; }
+    if (snap === null) { // wsl.exe 整体失败：保留 prev，不误判变更
+      inFlight = false;
+      endCheck();
+      return;
+    }
+    try {
+      if (prev === null) { prev = snap; return; } // 首轮仅建立基线，不触发变更
+      // 比对：文件集合变化 或 任一 md5 变化（含缺失标记变化）
+      const keysA = Object.keys(prev).sort().join(',');
+      const keysB = Object.keys(snap).sort().join(',');
+      let changed = keysA !== keysB;
+      if (!changed) {
+        for (const k of Object.keys(snap)) {
+          if (prev[k] !== snap[k]) { changed = true; break; }
+        }
       }
+      if (changed) {
+        prev = snap;
+        log(`[WATCHER] WSL env 变更（轮询）${projectId}`);
+        const info = getProjectInfo(projectDir);
+        io.emit('env-changed', { projectId, ...info });
+      }
+    } finally {
+      inFlight = false;
+      endCheck();
     }
-    if (changed) {
-      prev = snap;
-      log(`[WATCHER] WSL env 变更（轮询）${projectId}`);
-      const info = getProjectInfo(projectDir);
-      io.emit('env-changed', { projectId, ...info });
-    }
-    endCheck(); // 无论是否变更，本轮检查结束 → 前端停转圈
-  }, wslPollInterval);
+  }
 
-  // 封装成带 close() 的对象，复用现有 watchers 清理逻辑（before-quit / 删项目）
+  // 错峰初始延迟：所有 WSL 项目在启动瞬间被批量建立 poller，若立即同时触发会在首轮
+  // 瞬时拉起大量 wsl.exe。按 projectId 稳定错峰，把首波摊到整个间隔内。
+  const jitter = Math.abs(hashStr(projectId)) % Math.max(1000, wslPollInterval || 5000);
+  let timer = null;
+  const starter = setTimeout(() => {
+    timer = setInterval(runCheck, wslPollInterval);
+  }, jitter);
+
+  // 封装成带 close() 的对象，复用现有 watchers 清理逻辑（before-quit / 删项目 / 改设置重建）
   watchers.set(projectId, {
     _isWsl: true,
-    close() { stopped = true; clearInterval(timer); }
+    close() {
+      stopped = true;
+      clearTimeout(starter);
+      if (timer) clearInterval(timer);
+    }
   });
 }
 
