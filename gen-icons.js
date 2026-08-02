@@ -23,10 +23,12 @@ const pngToIco = require('png-to-ico').default;
 const clientPublic = path.join(__dirname, 'client', 'public');
 // 真正的 logo 源文件：应用图标专用、图形贴边填满画布的 logo.svg（"Env" 字样）
 const svgPath = path.join(clientPublic, 'logo.svg');
+// macOS 图标专用源：保持 full-bleed 画布，但文字更克制，避免 Dock 里显得过大
+const macSvgPath = path.join(clientPublic, 'logo-mac.svg');
 
-// 从 logo.svg 直接渲染指定尺寸的 PNG（高清母版，清晰）
-async function renderPngBuffer(size) {
-  return sharp(fs.readFileSync(svgPath))
+// 从指定 SVG 渲染指定尺寸的 PNG（高清母版，清晰）
+async function renderPngBuffer(size, sourceSvgPath = svgPath) {
+  return sharp(fs.readFileSync(sourceSvgPath))
     .resize(size, size, { kernel: sharp.kernel.lanczos3 })
     .png({ compressionLevel: 6 })
     .toBuffer();
@@ -44,8 +46,11 @@ async function main() {
   // Windows 运行时窗口图标：256x256 足够清晰，也避免窗口加载过大 PNG
   fs.writeFileSync(path.join(clientPublic, 'logo-win.png'), await renderPngBuffer(256));
 
-  // macOS 图标：1024x1024，electron-builder 会据此生成 icns
-  fs.writeFileSync(path.join(clientPublic, 'logo-mac.png'), await renderPngBuffer(1024));
+  // macOS 图标：1024x1024，electron-builder 会据此生成 icns（使用更克制的 mac 专用源）
+  if (!fs.existsSync(macSvgPath)) {
+    throw new Error('找不到 macOS 图标源文件: ' + macSvgPath);
+  }
+  fs.writeFileSync(path.join(clientPublic, 'logo-mac.png'), await renderPngBuffer(1024, macSvgPath));
 
   // Windows ICO：NSIS 安装程序、卸载程序、EXE 自身图标都需要多尺寸 ICO。
   // 先生成各尺寸临时 PNG（放在系统临时目录，避免污染项目），再调用 png-to-ico 合成，最后尽量清理。

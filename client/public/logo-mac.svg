@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- macOS 应用图标专用源：full-bleed 画布（系统会叠 squircle 圆角遮罩），
+       但 Env 文字字号比通用 logo.svg 小，避免在 Dock/Finder 里显得过大、过撑。 -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="#1E1E2E"/>
+  <text x="128" y="154" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="80" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
+</svg>
