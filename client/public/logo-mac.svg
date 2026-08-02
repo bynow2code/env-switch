@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- macOS 标准参考：实测系统自带 Calculator 图标，不透明内容包围盒约 85.9%（非 100% 满画布）。
-       故背景圆角方块内缩到占画布约 86%，使 Dock/Finder 里尺寸与系统原生 app 一致，不再"大一圈"。 -->
-  <rect x="18" y="18" width="220" height="220" rx="48" ry="48" fill="#1E1E2E"/>
-  <text x="128" y="152" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
+  <!-- macOS 图标参考：
+       - 系统 Calculator 实测约 85.9%，但同项目参考 app（easy-ops / SH）在 Dock 中内容约占 82%，
+         且 Env 为实心深色块，视觉更重。
+       - 故背景圆角方块内缩到占画布约 82%，与 SH 在 Dock 里的视觉大小对齐。 -->
+  <rect x="23" y="23" width="210" height="210" rx="46" ry="46" fill="#1E1E2E"/>
+  <text x="128" y="152" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="66" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
 </svg>
