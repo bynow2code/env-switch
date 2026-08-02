@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- macOS 图标：圆角方块悬浮于透明背景（带内边距，方块约占画布 73%）。
-       macOS 把整张 1024 图当图标边界，full-bleed 会让深色方块撑满显得过大；
-       改为带边距后，Dock/Finder 里显示为"悬浮的圆角方块"，尺寸更克制。 -->
-  <rect x="34" y="34" width="188" height="188" rx="46" ry="46" fill="#1E1E2E"/>
-  <text x="128" y="152" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
+  <!-- macOS 标准应用图标：full-bleed（图形占满整张画布），系统会叠标准 squircle 圆角遮罩。
+       Apple HIG 规定应用图标必须是满画布，所有 Mac app 在 Dock/Finder 里物理尺寸一致；
+       之前改成带透明边距（73%）会让方块真的小一圈、不标准，故恢复占满画布。 -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="#1E1E2E"/>
+  <text x="128" y="154" font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Inter, 'Helvetica Neue', Arial, sans-serif" font-size="80" font-weight="800" letter-spacing="-2" text-anchor="middle" fill="#FFFFFF">Env</text>
 </svg>
