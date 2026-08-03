@@ -72,7 +72,7 @@ In short, it's a **"switcher + manager" for `.env`** that turns repetitive envir
 
 1. The project card shows the current `APP_NAME` and `APP_ENV` from `.env`
 2. In the "Environment config switcher" area:
-   - The **currently active config** is highlighted (light-green background + left green bar) and shows a green "In use" pill — the criterion is that `.env` and that `.env.xxx` are byte-for-byte identical (switching is a byte-exact copy, so comments / quotes / trailing newlines don't affect the match), making it obvious at a glance which file is really in effect.
+   - The **currently active config** is highlighted (light-green background + left green bar) and shows a green "In use" pill — the criterion is that `.env` and that `.env.xxx` are byte-for-byte identical (switching is a byte-exact copy, so comments / quotes / trailing newlines don't affect the match), making it obvious at a glance which file is really in effect. If several `.env.xxx` files are byte-for-byte identical (equal md5), the one you **switched to most recently** is highlighted (the last-switched name, persisted, acts as the tiebreaker so multiple identical files don't highlight randomly). If `.env` matches none of the source files, no row is highlighted (honestly shown as "not linked").
    - Click the **"Switch" / "Re-apply"** button next to any `.env.xxx` to overwrite its content into `.env`; the switch button is always present on every row for convenient re-applying (e.g. after the source file was changed externally).
 3. That config file's content is copied into `.env` and the UI updates in real time
 
@@ -114,7 +114,7 @@ Yes. Switching overwrites the selected `.env.xxx` content into `.env`, replacing
 
 **Q: I changed `.env` but the UI didn't update?**
 - Local project path: the UI monitors `.env` changes in real time via chokidar and pushes updates.
-- WSL path (`\\wsl.localhost\...`): chokidar is unreliable there, so it falls back to **periodic polling** (lists files and recomputes md5 every 3 seconds); changes usually auto-refresh within a few seconds. If you want an immediate refresh, click the header "Refresh data" button to manually re-fetch all projects.
+- WSL path (`\\wsl.localhost\...`): chokidar is unreliable there, so it falls back to **periodic polling** (lists files and recomputes md5 every 10 seconds by default; adjustable from 500ms to 1 minute in Settings); changes auto-refresh on the next poll. If you want an immediate refresh, click the header "Refresh data" button to manually re-fetch all projects.
 
 **Q: Auto-update shows dev mode / can't connect?**
 Auto-update only works in **packaged builds**; the update source is GitHub Releases (repo `bynow2code/env-switch`). Dev mode only shows a hint and does not go online. If the repo is private, you must supply a token in the update source config.
