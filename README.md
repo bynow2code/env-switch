@@ -55,12 +55,11 @@ EnvSwitch 把这些 `.env` 集中管起来：
   # 或（需在 macOS 环境下）
   npm run electron-build-mac    # 构建 macOS dmg + zip
   ```
-- **本地开发调试**：同时启动服务端和前端开发服务器。
+- **本地开发调试**：以 Electron 窗口直接运行（内嵌服务端 + 构建后的前端）。
   ```bash
-  npm run dev
+  npm run electron-dev
   ```
-  服务端运行在 `http://localhost:3001`，前端（Vite）在 `http://localhost:5173`。
-  也可以构建前端后直接以 Electron 窗口运行：`npm run electron-dev`。
+  它会自动生成图标、构建前端并启动 Electron 窗口，应用后端运行在窗口内（系统分配端口）。
 
 ### 2. 添加项目
 
@@ -105,7 +104,6 @@ EnvSwitch 把这些 `.env` 集中管起来：
 ## 常见问题
 
 **Q：数据存在哪？**
-- 独立运行服务端（`npm run server` / `npm run dev`）：数据在 `server/data.json`。
 - 桌面应用（打包或 `npm run electron-dev`）：数据在 Electron 用户数据目录 `app.getPath('userData')/data/data.json`。
 - 卸载或重装桌面应用前，请按需备份该目录。
 

@@ -1,27 +1,38 @@
+# ============================================================
+# EnvSwitch .gitignore
+# 应用运行数据落在 Electron userData（不在仓库内）。
+# 本地依赖 / 构建产物 / 生成图标 / 环境变量 / 日志 / IDE 与系统文件均不进 git。
+# （原 client/.gitignore 已合并至此，避免规则分裂。）
+# ============================================================
+
+# 依赖
 node_modules/
+
+# 构建产物（实际产物为 client/dist 与 release/；根 dist/ 仅占位）
 dist/
+dist-ssr/
 client/dist/
 release/
-# 由 gen-icons.js 从 logo.svg 自动生成（构建前由 electron-* script 生成，无需进 git）。
-# 注意：源文件 logo.svg 与 favicon.svg 都不在此忽略范围内，必须进 git；
-#       只有下面生成的 png/ico 才被忽略。
+
+# 图标：由 gen-icons.js 从 logo.svg 自动生成，构建前生成，无需进 git
+#      （源文件 logo.svg / logo-mac.svg / favicon.svg 必须进 git，仅忽略生成的 png/ico）
 client/public/*.png
 client/public/*.ico
-
-# 本地数据文件（包含用户个人项目路径）
-# 覆盖主数据文件 + 任何备份/迁移遗留（如 server/data.json.bak.YYYY-MM-DD）
-# 注意：通配符用 `data.json*` 而非 `data*.json`——git 的 fnmatch `*` 不能跨第二个扩展名，
-# 后者无法匹配 `data.json.bak.2026-07-29`（.json 后面还有 .bak）
-server/data.json*
-
-# server 运行日志（每次启动追加，本地诊断用，不应进版本控制）
-server/logs/
 
 # 环境变量
 .env
 .env.local
+*.local
 
-# 编辑器
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 编辑器 / IDE
 .vscode/
 .idea/
 *.swp
@@ -30,3 +41,8 @@ server/logs/
 # 系统文件
 .DS_Store
 Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

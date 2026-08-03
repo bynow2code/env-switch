@@ -111,13 +111,8 @@ let updaterInitialized = false; // 防止 ipcMain.handle 重复注册（mac 重�
 let isChecking = false;        // 防重入：正在检查更新
 let isDownloading = false;     // 防重入：正在下载更新
 
-// 获取应用数据目录（固定返回真实的 userData，不受上方开发模式重定向影响）
-const getAppDataPath = () => {
-  return REAL_USER_DATA;
-};
-
-// 确保数据目录存在
-const DATA_DIR = path.join(getAppDataPath(), 'data');
+// 确保数据目录存在（固定落在真实的 userData 下，不受上方开发模式缓存重定向影响）
+const DATA_DIR = path.join(REAL_USER_DATA, 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -258,36 +253,33 @@ function getProjectInfo(projectDir) {
   const envVars = parseEnvFile(envPath);
   log(`[PROJECT] 读取项目信息 ${projectDir}`);
 
-  // 读取所有 .env.xxx 文件，排除 .env.example
-  const envFiles = [];
+  // 读取所有 .env.xxx 文件，排除 .env.example（WSL 路径走 wsl.exe 列举，本地路径直接 readdir）
+  let envFiles = [];
   try {
-    let files;
     if (isWslPath(projectDir)) {
       const parsed = parseWslPath(projectDir);
-      const cmd = wslListEnvFilesCmd(parsed.distro, parsed.linuxPath);
       try {
-        const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
-        files = parseEnvFileNames(output);
-      } catch (e) {
-        files = [];
+        const output = execSync(wslListEnvFilesCmd(parsed.distro, parsed.linuxPath), {
+          encoding: 'utf-8', timeout: 5000,
+        }).trim();
+        envFiles = parseEnvFileNames(output);
+      } catch (_e) {
+        envFiles = [];
       }
     } else if (fs.existsSync(projectDir)) {
-      files = fs.readdirSync(projectDir)
+      envFiles = fs.readdirSync(projectDir)
         .filter(f => f.startsWith('.env.') && f !== '.env.example');
-    }
-    for (const file of (files || [])) {
-      envFiles.push(file);
     }
   } catch (e) {
     log(`[PROJECT] 获取项目信息失败: ${e.message}`);
+    envFiles = [];
   }
 
-  // 当前在用配置：严格用 md5 实时比对 .env 与各 .env.xxx 的原始内容判定。
-  // 切换时 .env 是源文件的逐字节拷贝（本地 readFileSync→writeFileSync / WSL wsl.exe cp），
-  // 故 md5 完全一致才能命中；
-  // 一旦 .env 与所有 .env.xxx 都不一致（手动改过 .env、或源文件被外部改动），
-  // 则返回空串、不高亮任何行——这是真实状态，保持诚实。
-  // 注意：不回退到 data.json 的"上次选择"，否则会制造"内容不一样却显示使用中"的假阳性。
+  // 当前在用配置判定（详见 getActiveEnvFile 与上方注释）：
+  //   - 主匹配：md5 实时比对 .env 与各 .env.xxx 原始内容；命中谁谁高亮。
+  //   - 决胜负：多个 .env.xxx md5 一致时，用 data.json 持久化的"上次切换文件名"选中所切的那个，
+  //     仅当它确实在匹配列表内才生效——绝不在"无 md5 匹配"时兜底，故不会假阳性。
+  //   - 诚实：.env 与所有源文件 md5 都不一致时返回空串、不高亮任何行。
   const activeEnvFile = getActiveEnvFile(projectDir, envFiles);
 
   return {
@@ -329,9 +321,10 @@ function emitEnvChanged(projectId, projectDir) {
 // 设置文件监控
 // WSL 路径兜底：chokidar 无法可靠监听 Linux 文件系统（Electron 主进程跑在 Windows 侧，
 // 经 \\wsl.localhost 挂载监听不可靠），故改用「定时轮询 + md5 快照比对」：
-//   - 每个 WSL 项目只需 1 次 wsl.exe 调用：在 Linux 侧用 ls 列举 .env.* 并对每个候选文件 md5sum，
-//     直接返回「文件名|md5」；不再对每个文件各起一次 wsl.exe（旧实现 (1+N) 次同步 execSync，
-//     项目一多主线程被持续阻塞 → 窗口严重卡顿）。
+//   - 每个 WSL 项目只需 1 次 wsl.exe 调用做 ls 列举 .env.* 文件名（仅列举）；
+//     文件内容与 md5 全部在 Node 侧读 \\wsl.localhost\ UNC 路径计算（0 额外 wsl.exe 调用），
+//     彻底绕开把脚本塞进 wsl.exe 命令行的失败路径。旧实现每项目每轮 (1+N) 次同步 execSync，
+//     项目一多主线程被持续阻塞 → 窗口严重卡顿。
 //   - 用异步 exec（而非 execSync），快照比对不阻塞主进程事件循环。
 //   - 与上次快照比对，任一文件新增/删除/内容变更都推 env-changed 让前端刷新（含 md5 实时重算「使用中」高亮）。
 // 封装成带 close() 的对象存入 watchers，复用现有清理逻辑（删项目 / before-quit / 改设置重建）。
@@ -366,15 +359,11 @@ function setupWslPoller(projectId, projectDir) {
   }
   log(`[WATCHER] WSL 路径，改用定时轮询（${wslPollInterval}ms）${projectDir}`);
 
-  // 单次批量快照：在一个 wsl.exe 调用里完成「列举 .env.* + 对 .env 与各 .env.xxx 算 md5」，
-  // 直接由 Linux 侧 md5sum 算好并返回「文件名|md5」，避免在 Windows 端对每个文件各起一次 wsl.exe
-  // （旧实现每项目每轮 (1+N) 次同步 execSync，项目一多主线程被持续阻塞 → 窗口卡顿）。
-  // 这里用异步 exec（而非 execSync），不阻塞主进程事件循环。
-  // 文件缺失记为 '__missing__'，便于区分「被删除」与「内容变更」。wsl.exe 整体失败返回 null，
-  // 由调用方保留上一轮快照、不误触发变更。
   // 极简快照：wsl.exe 只做「列举 .env.* 文件名」一件事（与最初能跑通的旧代码同一 sh -c "ls" 模式，
   //   经 cmd.exe 双引号、无复杂脚本），文件内容和 md5 全部在 Node 侧算（直接读 \\wsl.localhost\ UNC 路径）。
   // 这样彻底绕开了「把脚本塞进 wsl.exe 命令行参数」这条路——它在本机实测多次失败（空 stdout / Command failed）。
+  // 文件缺失记为 '__missing__'，便于区分「被删除」与「内容变更」；wsl.exe 整体失败返回 null，
+  // 由调用方保留上一轮快照、不误触发变更。
   async function snapshot() {
     const { distro, linuxPath } = parsed;
     let files = [];
@@ -469,7 +458,6 @@ function setupWslPoller(projectId, projectDir) {
 
   // 封装成带 close() 的对象，复用现有 watchers 清理逻辑（before-quit / 删项目 / 改设置重建）
   watchers.set(projectId, {
-    _isWsl: true,
     close() {
       stopped = true;
       clearTimeout(starter);
@@ -488,13 +476,21 @@ function closeWatcher(projectId) {
   watchers.delete(projectId);
 }
 
-// 退出时一次性关闭所有 watcher
+// 退出时一次性关闭所有 watcher（复用 closeWatcher，避免与 chokidar / WSL 轮询的清理逻辑重复）
 function closeAllWatchers() {
-  watchers.forEach((w) => {
-    try { w.close(); } catch (e) {}
-    if (w._dirWatcher) { try { w._dirWatcher.close(); } catch (e) {} }
-  });
-  watchers.clear();
+  for (const id of [...watchers.keys()]) closeWatcher(id);
+}
+
+// 重建所有 WSL 项目的轮询器（改设置后即时套用新间隔）。setupWatcher 会先关闭旧 poller 再建新的。
+function rebuildWslWatchers(projects) {
+  for (const p of projects) {
+    if (!isWslPath(p.dir)) continue;
+    try {
+      setupWatcher(p.id, p.dir);
+    } catch (e) {
+      log(`[SERVER] 重启 WSL 轮询失败 ${p.id}: ${e.message}`);
+    }
+  }
 }
 
 function setupWatcher(projectId, projectDir) {
@@ -611,11 +607,7 @@ async function startServer() {
     saveData(data);
     wslPollInterval = val; // 更新运行中变量：后续新建的轮询器立即用新值
     // 重建所有 WSL 项目的轮询器，使新间隔立即生效（setupWatcher 会先关闭旧的再建新的）
-    for (const p of data.projects) {
-      if (isWslPath(p.dir)) {
-        try { setupWatcher(p.id, p.dir); } catch (e) { log(`[SERVER] 重启 WSL 轮询失败 ${p.id}: ${e.message}`); }
-      }
-    }
+    rebuildWslWatchers(data.projects);
     log(`[SERVER] WSL 轮询间隔已更新为 ${val}ms`);
     res.json({ wslPollInterval: val });
   });
@@ -683,6 +675,24 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // 更新项目排序：接收新的 id 顺序数组，按该顺序重排 data.projects 并持久化。
+  // 前端拖拽排序后调用；不在 ids 中的项目（理论上不会发生）保留在末尾，避免数据丢失。
+  expressApp.put('/api/projects/reorder', (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: '请提供 ids 数组' });
+    }
+    const data = loadData();
+    const ordered = ids
+      .map(id => data.projects.find(p => p.id === id))
+      .filter(Boolean); // 仅保留 ids 中真实存在的项目
+    const remaining = data.projects.filter(p => !ids.includes(p.id));
+    data.projects = [...ordered, ...remaining];
+    saveData(data);
+    log(`[SERVER] 项目顺序已更新（${ordered.length} 项）`);
+    res.json({ success: true });
+  });
+
   expressApp.post('/api/projects/:id/switch', (req, res) => {
     const { envFileName } = req.body;
     if (!envFileName) return res.status(400).json({ error: '请提供 env 文件名' });
@@ -735,14 +745,8 @@ async function startServer() {
       const info = getProjectInfo(project.dir);
       emitEnvChanged(project.id, project.dir);
       log(`[SERVER] 环境切换成功 ${project.id} -> ${envFileName}`);
-      res.json({
-        success: true,
-        projectId: project.id,
-        appName: info.appName,
-        appEnv: info.appEnv,
-        envFiles: info.envFiles,
-        activeEnvFile: info.activeEnvFile
-      });
+      // 复用 buildProjectView 统一字段（与列表/详情接口一致），避免响应对象重复拼装
+      res.json({ success: true, projectId: project.id, ...buildProjectView(project, false) });
     } catch (e) {
       logErr('SERVER', '环境切换失败', project.id, envFileName, e.message);
       res.status(500).json({ error: '切换失败: ' + e.message });
@@ -800,10 +804,8 @@ async function startServer() {
 async function createWindow() {
   log('[MAIN] 创建主窗口 …');
   mainWindow = new BrowserWindow({
-    // 窗口默认尺寸：根据 1080p/2K 显示器实测反推——之前默认 1200×800 在宽屏上
-    // 居中放置后，窗口外侧两侧大片桌面背景，截图看起来像"窗口两边大量空白"。
-    // 改大到 1500×900：CSS 的 .app width:100% + .project-list grid auto-fill
-    // 会自动在更大空间里铺满（grid 实际本来就铺满窗口，问题只是窗口本身偏小）。
+    // 窗口默认尺寸：兼顾 1080p/2K 显示器。CSS 的 .app width:100% + .project-list grid
+    // auto-fill 会自动在窗口内铺满卡片；尺寸过大会在宽屏上两侧留大片空白。
     width: 1200,
     height: 720,
     minWidth: 900,

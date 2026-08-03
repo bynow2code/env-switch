@@ -24,24 +24,8 @@ export default defineConfig({
     // （Electron 模式下后端也绑定了 127.0.0.1，前后端一致）
     host: '127.0.0.1',
     port: 5173,
-
-    proxy: {
-      // REST API 代理 → 独立后端 server/index.js（默认监听 3001 端口）
-      // 开发模式下 npm run dev 通过 concurrently 同时启动 server 和 client
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-        timeout: 10000,
-      },
-      // WebSocket 代理 → Socket.IO 实时推送 .env 文件变更事件
-      // ws: true 启用 WebSocket 代理；proxyTimeout 控制 WS 握手超时
-      '/socket.io': {
-        target: 'http://localhost:3001',
-        ws: true,
-        changeOrigin: true,
-        timeout: 10000,
-        proxyTimeout: 10000,
-      },
-    },
+    // 说明：EnvSwitch 的后端内嵌于 Electron 主进程（electron-main.js 的 startServer），
+    // 通过 Electron 窗口加载页面，前后端同源（系统分配端口），无需 Vite dev server 代理。
+    // 故这里不配置 /api、/socket.io 代理（旧版曾指向已删除的独立 server/index.js :3001，已移除）。
   },
 })

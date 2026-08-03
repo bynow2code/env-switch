@@ -55,12 +55,11 @@ In short, it's a **"switcher + manager" for `.env`** that turns repetitive envir
   # or (must run on macOS)
   npm run electron-build-mac    # build the macOS dmg + zip
   ```
-- **Local development**: start both the server and the frontend dev server.
+- **Local development**: run directly in an Electron window (embedded server + built frontend).
   ```bash
-  npm run dev
+  npm run electron-dev
   ```
-  The server runs at `http://localhost:3001` and the frontend (Vite) at `http://localhost:5173`.
-  You can also build the frontend and run it in an Electron window with `npm run electron-dev`.
+  It auto-generates icons, builds the frontend, and launches the Electron window; the app backend runs inside the window (OS-assigned port).
 
 ### 2. Add a project
 
@@ -105,7 +104,6 @@ In short, it's a **"switcher + manager" for `.env`** that turns repetitive envir
 ## FAQ
 
 **Q: Where is the data stored?**
-- Standalone server (`npm run server` / `npm run dev`): data is in `server/data.json`.
 - Desktop app (packaged or `npm run electron-dev`): data is in the Electron user-data directory `app.getPath('userData')/data/data.json`.
 - Back up this directory as needed before uninstalling or reinstalling the desktop app.
 

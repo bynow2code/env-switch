@@ -24,12 +24,64 @@ function mergeProjectFields(prev, projectId, fields) {
   return prev.map(p => (p.id === projectId ? { ...p, ...fields } : p));
 }
 
+// 从接口/推送数据中提取「环境相关字段」，供 socket 推送 / 单卡片刷新 / 切换成功三处共用
+function pickEnvFields(d) {
+  return {
+    appName: d.appName,
+    appEnv: d.appEnv,
+    envFiles: d.envFiles,
+    activeEnvFile: d.activeEnvFile,
+  };
+}
+
 // 刷新图标（feather refresh-cw），卡片与 header 两处复用
 function RefreshCwIcon({ size = 16 }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
       <polyline points="23 4 23 10 17 10" />
       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  );
+}
+
+// 头部工具栏图标（feather），统一在此定义，避免渲染区塞满 inline SVG
+function PlusIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+// 检查更新（feather arrow-up-circle：升级箭头，表达「升级」，与「刷新/设置」明显区分）
+function UpdateIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 12l-4-4-4 4" />
+      <path d="M12 16V8" />
+    </svg>
+  );
+}
+
+// 设置（feather settings gear）
+function SettingsIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+// App info（feather info）
+function InfoIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
     </svg>
   );
 }
@@ -143,7 +195,7 @@ function ProjectCardView({
         </span>
         <span className="env-pair">
           <span className="env-k">APP_ENV</span>
-          <span className={`env-value env-badge ${project.appEnv || ''}`}>
+          <span className="env-value env-badge">
             {project.appEnv || <em>未设置</em>}
           </span>
         </span>
@@ -252,7 +304,6 @@ function App() {
   const [wslChecking, setWslChecking] = useState({})
 
   // 设置面板状态：WSL 轮询间隔配置
-  const [settingsWslInterval, setSettingsWslInterval] = useState(10000) // 当前已保存值（与服务端默认一致，进入后由 /settings 覆盖）
   const [settingsInput, setSettingsInput] = useState('10000')           // 输入框值（字符串，便于受控）
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -317,9 +368,7 @@ function App() {
       const res = await fetch(`${API_BASE}/projects/${projectId}`)
       if (res.ok) {
         const data = await res.json()
-        applyProjectUpdate(projectId, {
-          appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
-        })
+        applyProjectUpdate(projectId, pickEnvFields(data))
       }
     } catch (e) {
       console.error('[WEB] 单卡片刷新失败', projectId, e)
@@ -334,7 +383,6 @@ function App() {
       .then(r => r.json())
       .then(d => {
         if (d && typeof d.wslPollInterval === 'number') {
-          setSettingsWslInterval(d.wslPollInterval)
           setSettingsInput(String(d.wslPollInterval))
         }
       })
@@ -358,7 +406,6 @@ function App() {
       })
       if (res.ok) {
         const data = await res.json()
-        setSettingsWslInterval(data.wslPollInterval)
         setShowSettingsModal(false)
         // 兜底：保存间隔会重建所有 WSL 轮询器（旧 poller 被 close），清空检查中转圈态，
         // 避免后端 in-flight 的 env-checked 在极端时序下丢失导致某卡片卡在转圈。
@@ -383,9 +430,7 @@ function App() {
 
     s.on('env-changed', (data) => {
       console.log('[WEB] 收到 env-changed', data.projectId, 'appName=', data.appName, 'appEnv=', data.appEnv)
-      applyProjectUpdate(data.projectId, {
-        appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
-      })
+      applyProjectUpdate(data.projectId, pickEnvFields(data))
     })
 
     // WSL 定时轮询「正在检查」：对应卡片刷新按钮转圈；检查结束（含异常/首轮基线/变更/无变更）停转。
@@ -564,9 +609,7 @@ function App() {
       const data = await res.json()
       if (res.ok) {
         console.log('[WEB] 环境切换成功', projectId, '->', envFileName)
-        applyProjectUpdate(projectId, {
-          appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
-        })
+        applyProjectUpdate(projectId, pickEnvFields(data))
       } else {
         console.warn('[WEB] 环境切换失败', projectId, data.error)
         alert(data.error || '切换失败')
@@ -615,38 +658,23 @@ function App() {
       <header className="app-header">
         <div className="app-header-right">
           <button className="btn-icon" onClick={() => setShowAddDialog(true)} title="添加项目">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
+            <PlusIcon />
           </button>
           {/* 真正的「刷新数据」按钮：手动重新拉取所有项目（覆盖 WSL 等无自动监听的场景） */}
           <button className="btn-icon" onClick={() => refreshAll()} title="刷新数据">
             <RefreshCwIcon size={18} />
           </button>
-          {/* 检查更新（feather arrow-up-circle：升级箭头，语义为「检查/执行升级」，与「刷新/设置」明显区分） */}
+          {/* 检查更新：升级箭头语义，与「刷新/设置」明显区分 */}
           <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击查看' : '检查更新'} disabled={updateState === 'checking'}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              {/* 检查更新（feather arrow-up-circle：升级箭头，表达「升级」） */}
-              <circle cx="12" cy="12" r="10" />
-              <path d="M16 12l-4-4-4 4" />
-              <path d="M12 16V8" />
-            </svg>
+            <UpdateIcon />
             {updateState === 'downloaded' && <span className="update-badge">!</span>}
           </button>
-          {/* 设置（新功能，UI 用英文）：调整 WSL 轮询间隔等 */}
+          {/* 设置（UI 用英文）：调整 WSL 轮询间隔等 */}
           <button className="btn-icon" onClick={() => setShowSettingsModal(true)} title="Settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
+            <SettingsIcon />
           </button>
           <button className="btn-icon" onClick={() => setShowInfoModal(true)} title="App info">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="16" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12.01" y2="8" />
-            </svg>
+            <InfoIcon />
           </button>
         </div>
       </header>

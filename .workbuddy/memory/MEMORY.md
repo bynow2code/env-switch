@@ -4,12 +4,10 @@
 - **EnvSwitch 不是 HMR 应用**。Electron 主进程（`electron-main.js`）自带 `startServer()`（约 339 行起），
   在其中用 Express 提供 `client/dist` 并监听系统随机端口，`mainWindow.loadURL('http://127.0.0.1:${port}')`。
   即最终 UI = **electron-main.js 内嵌 Express** serving 的 `client/dist`。
-- ⚠️ **`server/index.js` 不是应用实际使用的服务！** 它是 `npm run server` 的独立 standalone 服务（端口 3001，
-  数据写 `server/data.json`），应用（electron-dev / start / 打包 exe）**完全不调用它**。**任何"改 API/后端逻辑"
-  都必须改 `electron-main.js` 的 `startServer()` 内路由，改 server/index.js 是死代码。**
-  （这是当初"选中高亮不生效"反复失败的根因——一直改错了文件。）
-- 数据落点分两处：**应用真实数据** = `userData/data/data.json`（electron-main.js 的 DATA_DIR，line 115-119）；
-  `server/index.js` 用的是 `server/data.json`，与前者无关。
+- ⚠️ **（历史）`server/index.js` 曾是独立 standalone 服务（端口 3001、写 `server/data.json`），应用从未调用它。**
+  已在 2026-08-03 重构中整体删除 `server/` 目录并移除 `npm run server` / `dev` 脚本——所有 API/后端逻辑
+  **只**在 `electron-main.js` 的 `startServer()` 内路由。改后端必须改这里。（当初"选中高亮不生效"反复失败的根因就是一直改错了文件。）
+- 数据落点：**应用真实数据** = `userData/data/data.json`（electron-main.js 的 DATA_DIR）；旧的 `server/data.json` 已随 server/ 删除一并清除。
 - **改前端 CSS/JS 后必须：** `npm run build` 重建 dist → **重启应用或窗口硬刷新（Ctrl+R）** 才能看到。
   仅改 src 不 build、或不重启/刷新，窗口永远显示旧 dist。
 - **打包 exe 用的是内嵌的 dist 副本**（electron-builder 打包时把 `client/dist` 复制进包内），
@@ -39,7 +37,8 @@
   - 现状：`getProjectInfo(projectDir)` 单参数，`activeEnvFile = getActiveEnvFile(projectDir, envFiles)`。命中谁谁高亮；一个都不一致 → 返回 `''`、不高亮任何行。
 - 切换实现确认是**逐字节拷贝**：本地 `fs.readFileSync`→`fs.writeFileSync` 原样写；WSL 走 `wsl.exe cp`，故 md5 完全一致、精确命中（注释/引号/末尾空行都不影响）。
 - 前端规则：命中行 `isActive = file===activeEnvFile` → **`.active` 高亮（浅绿底+左绿条）+ 显示绿色「使用中」胶囊 + 切换按钮始终保留**（title"重新套用此配置"）。无命中时不高亮任何行。
-- 实现位置：**必须改 `electron-main.js` 的 `startServer()` 内路由**（真实服务端）；`server/index.js` 是死代码别改。
+- 实现位置：**必须改 `electron-main.js` 的 `startServer()` 内路由**（真实服务端）；`server/index.js` 已删除，勿再为其改动。
+- **拖拽排序持久化**：`PUT /api/projects/reorder`（接收 `{ ids: [...] }`）在 `electron-main.js` 重排 `data.projects` 并 `saveData`；前端 `handleDragEnd` 调用它。该路由曾只存在于已删的 `server/index.js`，真实应用一度缺此路由导致排序不持久化，已于 2026-08-03 补回。
 - ⚠️ **改 electron-main.js 后必须重启应用 / 重新打包（electron-build）**，否则内嵌旧服务不返回字段，前端恒不生效。
 - 若以后要支持"手动标记默认配置/多环境组合激活"等，需在此处扩展（注意：加兜底会重蹈"假阳性使用中"的覆辙，需谨慎）。
 
