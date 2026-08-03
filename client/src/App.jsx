@@ -19,6 +19,21 @@ import './App.css'
 
 const API_BASE = '/api'
 
+// 把一次「项目更新」合并进项目列表（纯函数，供 socket 实时推送 / 单卡片刷新 / 切换后刷新共用）
+function mergeProjectFields(prev, projectId, fields) {
+  return prev.map(p => (p.id === projectId ? { ...p, ...fields } : p));
+}
+
+// 刷新图标（feather refresh-cw），卡片与 header 两处复用
+function RefreshCwIcon({ size = 16 }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  );
+}
+
 // 统一的剪贴板复制 helper（卡片路径按钮 + App Info 弹窗的 Copy 按钮共用）。
 // 优先用 navigator.clipboard（Electron 渲染进程 contextIsolation=true 下可用），
 // 失败降级到 textarea + execCommand——避免某些环境 clipboard API 受限时直接抛错中断点击。
@@ -94,10 +109,7 @@ function ProjectCardView({
             disabled={refreshing}
             title="刷新此项目"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
+            <RefreshCwIcon size={14} />
           </button>
           <button
             type="button"
@@ -142,7 +154,8 @@ function ProjectCardView({
           <div className="env-file-list">
             {project.envFiles.map(file => {
               const isSwitching = switching[project.id] === file
-              // 当前在用配置：由服务端严格 md5 比对得出（失配时回退持久化的上次选择）。
+              // 当前在用配置：服务端以 .env 与各 .env.xxx 的 md5 实时比对得出；当多个文件 md5 一致时，
+              // 以持久化的上次切换文件名决胜负（仅在匹配列表内才生效，绝不假阳性）。
               // 命中文件即「真正在用」的那条——高亮 + 显示「使用中」；
               // 切换按钮在所有行都保留，便于随时覆盖/重新套用（应对源文件被外部改动的情况）。
               const isActive = project.activeEnvFile === file
@@ -239,8 +252,8 @@ function App() {
   const [wslChecking, setWslChecking] = useState({})
 
   // 设置面板状态：WSL 轮询间隔配置
-  const [settingsWslInterval, setSettingsWslInterval] = useState(5000) // 当前已保存值
-  const [settingsInput, setSettingsInput] = useState('5000')           // 输入框值（字符串，便于受控）
+  const [settingsWslInterval, setSettingsWslInterval] = useState(10000) // 当前已保存值（与服务端默认一致，进入后由 /settings 覆盖）
+  const [settingsInput, setSettingsInput] = useState('10000')           // 输入框值（字符串，便于受控）
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsError, setSettingsError] = useState('')
@@ -280,6 +293,11 @@ function App() {
     }
   }, [])
 
+  // 把一次项目更新合并进列表状态（统一供 socket 推送 / 单卡片刷新 / 切换成功三处复用）
+  const applyProjectUpdate = useCallback((projectId, fields) => {
+    setProjects(prev => mergeProjectFields(prev, projectId, fields));
+  }, [])
+
   // 全局刷新（header「刷新数据」按钮）：包一层全局转圈态，期间所有卡片刷新按钮旋转。
   // 复用 loadProjects，仅在外层管理 globalRefreshing 状态。
   const refreshAll = useCallback(async () => {
@@ -299,20 +317,16 @@ function App() {
       const res = await fetch(`${API_BASE}/projects/${projectId}`)
       if (res.ok) {
         const data = await res.json()
-        setProjects(prev =>
-          prev.map(p =>
-            p.id === projectId
-              ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
-              : p
-          )
-        )
+        applyProjectUpdate(projectId, {
+          appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
+        })
       }
     } catch (e) {
       console.error('[WEB] 单卡片刷新失败', projectId, e)
     } finally {
       setCardRefreshing(prev => ({ ...prev, [projectId]: false }))
     }
-  }, [])
+  }, [applyProjectUpdate])
 
   // 进入时拉取当前设置（目前含 WSL 轮询间隔），填充输入框与已保存值
   useEffect(() => {
@@ -331,8 +345,8 @@ function App() {
   const saveSettings = async () => {
     setSettingsError('')
     const val = Number(settingsInput)
-    if (!Number.isInteger(val) || val < 500 || val > 600000) {
-      setSettingsError('Interval must be an integer between 500 and 600000 ms.')
+    if (!Number.isInteger(val) || val < 500 || val > 60000) {
+      setSettingsError('Interval must be an integer between 500 and 60000 ms.')
       return
     }
     setSettingsSaving(true)
@@ -369,13 +383,9 @@ function App() {
 
     s.on('env-changed', (data) => {
       console.log('[WEB] 收到 env-changed', data.projectId, 'appName=', data.appName, 'appEnv=', data.appEnv)
-      setProjects(prev =>
-        prev.map(p =>
-          p.id === data.projectId
-            ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
-            : p
-        )
-      )
+      applyProjectUpdate(data.projectId, {
+        appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
+      })
     })
 
     // WSL 定时轮询「正在检查」：对应卡片刷新按钮转圈；检查结束（含异常/首轮基线/变更/无变更）停转。
@@ -388,7 +398,7 @@ function App() {
     })
 
     return () => s.disconnect()
-  }, [])
+  }, [applyProjectUpdate])
 
   // 自动更新：订阅主进程推送的更新事件 + 获取当前版本号
   useEffect(() => {
@@ -554,13 +564,9 @@ function App() {
       const data = await res.json()
       if (res.ok) {
         console.log('[WEB] 环境切换成功', projectId, '->', envFileName)
-        setProjects(prev =>
-          prev.map(p =>
-            p.id === projectId
-              ? { ...p, appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile }
-              : p
-          )
-        )
+        applyProjectUpdate(projectId, {
+          appName: data.appName, appEnv: data.appEnv, envFiles: data.envFiles, activeEnvFile: data.activeEnvFile,
+        })
       } else {
         console.warn('[WEB] 环境切换失败', projectId, data.error)
         alert(data.error || '切换失败')
@@ -616,11 +622,7 @@ function App() {
           </button>
           {/* 真正的「刷新数据」按钮：手动重新拉取所有项目（覆盖 WSL 等无自动监听的场景） */}
           <button className="btn-icon" onClick={() => refreshAll()} title="刷新数据">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-              {/* 刷新数据（feather refresh-cw） */}
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
+            <RefreshCwIcon size={18} />
           </button>
           {/* 检查更新（feather arrow-up-circle：升级箭头，语义为「检查/执行升级」，与「刷新/设置」明显区分） */}
           <button className="btn-icon" onClick={handleCheckUpdates} title={updateState === 'downloaded' ? '更新可用，点击查看' : '检查更新'} disabled={updateState === 'checking'}>
@@ -873,13 +875,13 @@ function App() {
               <input
                 type="number"
                 min="500"
-                max="600000"
+                max="60000"
                 step="100"
                 value={settingsInput}
                 onChange={e => setSettingsInput(e.target.value)}
                 disabled={settingsSaving}
               />
-              <p className="settings-hint">How often WSL projects are polled for .env changes. Range 500–600000 ms.</p>
+              <p className="settings-hint">How often WSL projects are polled for .env changes. Range 500–60000 ms.</p>
             </div>
             {settingsError && <div className="error-msg">{settingsError}</div>}
             <div className="dialog-actions">

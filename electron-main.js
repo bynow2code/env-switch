@@ -164,10 +164,23 @@ function wslCopyFile(sourcePath, targetPath) {
   execSync(cmd, { stdio: 'pipe', timeout: 5000 });
 }
 
-// 通过 wsl.exe 读取文件内容（用于 WSL 路径）
-// 判断是否为 WSL 路径
+// 判断是否为 WSL 路径：直接复用 parseWslPath 的解析结果，避免正则重复维护
 function isWslPath(filePath) {
-  return /^\\\\wsl(?:\.localhost)?\\/i.test(filePath);
+  return parseWslPath(filePath) !== null;
+}
+
+// 构造「列举 WSL 项目下 .env.* 文件」的 wsl.exe 命令（Linux 侧 ls + glob，结果与 Node 端解析共用）。
+function wslListEnvFilesCmd(distro, linuxPath) {
+  return `wsl.exe -d ${distro} sh -c "ls -1a ${linuxPath}/.env.* 2>/dev/null || true"`;
+}
+
+// 把 wsl.exe 列举输出的原始 stdout 解析为「文件名」数组（剔除路径前缀、仅保留 .env.x 且排除 .env.example）。
+// 本地 readdirSync 的结果已是文件名，可直接复用同一过滤逻辑。
+function parseEnvFileNames(stdout) {
+  if (!stdout) return [];
+  return String(stdout).split('\n')
+    .map(f => f.trim().split('/').pop())
+    .filter(f => f && f.startsWith('.env.') && f !== '.env.example');
 }
 
 // 读取文件原始内容（兼容 WSL 路径）：统一直接用 Windows UNC 路径（\\wsl.localhost\...）的 fs 读取，
@@ -188,13 +201,12 @@ function readRawFile(fp) {
 function getActiveEnvFile(projectDir, envFiles) {
   if (!envFiles || envFiles.length === 0) return ''
   const envHash = crypto.createHash('md5').update(readRawFile(path.join(projectDir, '.env'))).digest('hex')
-  if (!envHash) return '' // .env 不存在或读不到
   // 收集所有 md5 与 .env 一致的文件：内容完全相同的多个 .env.xxx 会全部命中，
   // 此时单靠 md5 无法区分是哪一个，需要用「文件名」进一步决胜负。
   const matches = []
   for (const f of envFiles) {
     const h = crypto.createHash('md5').update(readRawFile(path.join(projectDir, f))).digest('hex')
-    if (h && h === envHash) matches.push(f)
+    if (h === envHash) matches.push(f)
   }
   if (matches.length === 0) return ''           // 无内容匹配 → 不高亮（诚实，绝不假阳性）
   if (matches.length === 1) return matches[0]   // 唯一匹配 → 直接返回
@@ -252,31 +264,19 @@ function getProjectInfo(projectDir) {
     let files;
     if (isWslPath(projectDir)) {
       const parsed = parseWslPath(projectDir);
-      // 使用 sh -c 执行以支持 glob 展开
-      const cmd = `wsl.exe -d ${parsed.distro} sh -c "ls -1a ${parsed.linuxPath}/.env.* 2>/dev/null || true"`;
+      const cmd = wslListEnvFilesCmd(parsed.distro, parsed.linuxPath);
       try {
         const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
-        if (output) {
-          files = output.split('\n').map(f => {
-            // ls 可能返回完整路径，只取文件名
-            const basename = f.trim().split('/').pop();
-            return basename;
-          }).filter(f => f && f.startsWith('.env.') && f !== '.env.example');
-        }
+        files = parseEnvFileNames(output);
       } catch (e) {
         files = [];
       }
-    } else {
-      if (fs.existsSync(projectDir)) {
-        files = fs.readdirSync(projectDir);
-      }
+    } else if (fs.existsSync(projectDir)) {
+      files = fs.readdirSync(projectDir)
+        .filter(f => f.startsWith('.env.') && f !== '.env.example');
     }
-    if (files) {
-      for (const file of files) {
-        if (file.startsWith('.env.') && file !== '.env.example') {
-          envFiles.push(file);
-        }
-      }
+    for (const file of (files || [])) {
+      envFiles.push(file);
     }
   } catch (e) {
     log(`[PROJECT] 获取项目信息失败: ${e.message}`);
@@ -295,9 +295,35 @@ function getProjectInfo(projectDir) {
     appEnv: envVars['APP_ENV'] || '',
     allEnvVars: envVars,
     envFiles,
-    // 当前在用配置：md5 实时比对优先，失配时回退持久化选择（前端用于高亮 + 标记"使用中"）
+    // 当前在用配置：md5 实时比对优先；仅当多个 .env.xxx 内容相同（md5 一致）时，
+    // 才用持久化的上次切换文件名决胜负（不在匹配列表内则忽略，绝不假阳性）。前端据此高亮 + 标记"使用中"。
     activeEnvFile
   };
+}
+
+// 把内部 project 记录转换为前端视图对象（统一字段，避免各路由重复拼装）。
+// includeAllEnvVars=true 时额外返回 allEnvVars（仅详情接口需要）。
+function buildProjectView(project, includeAllEnvVars) {
+  const info = getProjectInfo(project.dir);
+  const view = {
+    id: project.id,
+    name: project.name,
+    dir: project.dir,
+    appName: info.appName,
+    appEnv: info.appEnv,
+    envFiles: info.envFiles,
+    activeEnvFile: info.activeEnvFile,
+  };
+  if (includeAllEnvVars) view.allEnvVars = info.allEnvVars;
+  return view;
+}
+
+// 统一推送「某项目 .env 发生变化」：实时重算项目信息并广播给前端（含 md5 重算的「使用中」高亮）。
+// 集中此处，避免在 change/add/unlink 监听、WSL 轮询、切换接口多处重复「getProjectInfo + io.emit」模板。
+function emitEnvChanged(projectId, projectDir) {
+  if (!io) return;
+  const info = getProjectInfo(projectDir);
+  io.emit('env-changed', { projectId, ...info });
 }
 
 // 设置文件监控
@@ -310,15 +336,15 @@ function getProjectInfo(projectDir) {
 //   - 与上次快照比对，任一文件新增/删除/内容变更都推 env-changed 让前端刷新（含 md5 实时重算「使用中」高亮）。
 // 封装成带 close() 的对象存入 watchers，复用现有清理逻辑（删项目 / before-quit / 改设置重建）。
 // WSL 定时轮询间隔（毫秒），可由「设置」调整；默认值 10000（WSL 本就非实时，10s 足够且大幅降低开销），
-// 合法范围 [500, 600000]。启动即从 data.json 读取已保存值（若存在且合法），否则用默认。
+// 合法范围 [500, 60000]。启动即从 data.json 读取已保存值（若存在且合法），否则用默认。
 // 运行时保存设置会更新此变量，并已运行中的 WSL 轮询器会被重建以套用新间隔（见 PUT /api/settings）。
 // 为避免大量 WSL 项目在启动瞬间同时触发首轮轮询而瞬时拉起一堆 wsl.exe，每个 poller 按 projectId
 // 稳定错峰启动（见 setupWslPoller 内的 jitter）。
 let wslPollInterval = 10000;
 try {
-  const _initData = loadData();
-  if (typeof _initData.wslPollInterval === 'number' && _initData.wslPollInterval >= 500 && _initData.wslPollInterval <= 600000) {
-    wslPollInterval = Math.floor(_initData.wslPollInterval);
+  const savedData = loadData();
+  if (typeof savedData.wslPollInterval === 'number' && savedData.wslPollInterval >= 500 && savedData.wslPollInterval <= 60000) {
+    wslPollInterval = Math.floor(savedData.wslPollInterval);
   }
 } catch (_e) {}
 
@@ -351,18 +377,13 @@ function setupWslPoller(projectId, projectDir) {
   // 这样彻底绕开了「把脚本塞进 wsl.exe 命令行参数」这条路——它在本机实测多次失败（空 stdout / Command failed）。
   async function snapshot() {
     const { distro, linuxPath } = parsed;
-    const listCmd = `wsl.exe -d ${distro} sh -c "ls -1a ${linuxPath}/.env.* 2>/dev/null || true"`;
     let files = [];
     try {
-      const { stdout } = await execAsync(listCmd, {
+      const { stdout } = await execAsync(wslListEnvFilesCmd(distro, linuxPath), {
         encoding: 'utf-8', timeout: 8000, maxBuffer: 1024 * 1024, windowsHide: true,
       });
-      if (stdout) {
-        files = stdout.split('\n')
-          .map(f => f.trim().split('/').pop())
-          .filter(f => f && f.startsWith('.env.') && f !== '.env.example');
-      }
-      log(`[WATCHER] WSL 列举 ${projectId}: rawLen=${stdout.length}, files=${JSON.stringify(files)}`);
+      files = parseEnvFileNames(stdout);
+      log(`[WATCHER] WSL 列举 ${projectId}: rawLen=${(stdout || '').length}, files=${JSON.stringify(files)}`);
     } catch (e) {
       log(`[WATCHER] WSL 列举失败 ${projectDir}: ${e.message}`);
       return null; // 本轮失败：保留 prev，不误判变更
@@ -430,8 +451,7 @@ function setupWslPoller(projectId, projectDir) {
       if (changed) {
         prev = snap;
         log(`[WATCHER] WSL env 变更（轮询）${projectId}`);
-        const info = getProjectInfo(projectDir);
-        io.emit('env-changed', { projectId, ...info });
+        emitEnvChanged(projectId, projectDir);
       }
     } finally {
       inFlight = false;
@@ -458,17 +478,29 @@ function setupWslPoller(projectId, projectDir) {
   });
 }
 
+// 统一清理单个项目的 watcher（兼容 chokidar 与 WSL 轮询器两种形态），
+// 避免在 setupWatcher / DELETE 接口 / before-quit 三处重复「close + 清理 _dirWatcher + 删除」逻辑。
+function closeWatcher(projectId) {
+  const w = watchers.get(projectId);
+  if (!w) return;
+  try { w.close(); } catch (e) {}
+  if (w._dirWatcher) { try { w._dirWatcher.close(); } catch (e) {} }
+  watchers.delete(projectId);
+}
+
+// 退出时一次性关闭所有 watcher
+function closeAllWatchers() {
+  watchers.forEach((w) => {
+    try { w.close(); } catch (e) {}
+    if (w._dirWatcher) { try { w._dirWatcher.close(); } catch (e) {} }
+  });
+  watchers.clear();
+}
+
 function setupWatcher(projectId, projectDir) {
   log(`[WATCHER] 设置监控 projectId=${projectId} ${projectDir}`);
-  // 清理旧的 watcher
-  if (watchers.has(projectId)) {
-    const old = watchers.get(projectId);
-    try { old.close(); } catch (e) {}
-    if (old._dirWatcher) {
-      try { old._dirWatcher.close(); } catch (e) {}
-    }
-    watchers.delete(projectId);
-  }
+  // 清理旧的 watcher（兼容 chokidar / WSL 轮询器，见 closeWatcher）
+  closeWatcher(projectId);
 
   const envPath = path.join(projectDir, '.env');
 
@@ -497,8 +529,7 @@ function setupWatcher(projectId, projectDir) {
 
   watcher.on('change', () => {
     log(`[WATCHER] env 变更 (change) ${projectId}`);
-    const info = getProjectInfo(projectDir);
-    io.emit('env-changed', { projectId, ...info });
+    emitEnvChanged(projectId, projectDir);
   });
 
   watcher.on('error', (err) => {
@@ -513,14 +544,12 @@ function setupWatcher(projectId, projectDir) {
 
   dirWatcher.on('add', () => {
     log(`[WATCHER] env 文件新增 (add) ${projectId}`);
-    const info = getProjectInfo(projectDir);
-    io.emit('env-changed', { projectId, ...info });
+    emitEnvChanged(projectId, projectDir);
   });
 
   dirWatcher.on('unlink', () => {
     log(`[WATCHER] env 文件删除 (unlink) ${projectId}`);
-    const info = getProjectInfo(projectDir);
-    io.emit('env-changed', { projectId, ...info });
+    emitEnvChanged(projectId, projectDir);
   });
 
   dirWatcher.on('error', (err) => {
@@ -554,37 +583,14 @@ async function startServer() {
   // API 路由
   expressApp.get('/api/projects', (req, res) => {
     const data = loadData();
-    const projects = data.projects.map(p => {
-      const info = getProjectInfo(p.dir);
-      return {
-        id: p.id,
-        name: p.name,
-        dir: p.dir,
-        appName: info.appName,
-        appEnv: info.appEnv,
-        envFiles: info.envFiles,
-        activeEnvFile: info.activeEnvFile
-      };
-    });
-    res.json(projects);
+    res.json(data.projects.map(p => buildProjectView(p, false)));
   });
 
   expressApp.get('/api/projects/:id', (req, res) => {
     const data = loadData();
     const project = data.projects.find(p => p.id === req.params.id);
     if (!project) return res.status(404).json({ error: '项目不存在' });
-
-    const info = getProjectInfo(project.dir);
-    res.json({
-      id: project.id,
-      name: project.name,
-      dir: project.dir,
-      appName: info.appName,
-      appEnv: info.appEnv,
-      allEnvVars: info.allEnvVars,
-      envFiles: info.envFiles,
-      activeEnvFile: info.activeEnvFile
-    });
+    res.json(buildProjectView(project, true));
   });
 
   // 设置 —— 读取当前配置（目前仅 WSL 轮询间隔，后续可扩展更多项）
@@ -593,12 +599,12 @@ async function startServer() {
   });
 
   // 设置 —— 更新 WSL 轮询间隔并即时生效
-  // 校验：必须是 500–600000 之间的整数（毫秒）；过短会频繁 wsl.exe 调用拖累性能，过长则变更感知延迟。
+  // 校验：必须是 500–60000 之间的整数（毫秒）；过短会频繁 wsl.exe 调用拖累性能，过长则变更感知延迟。
   expressApp.put('/api/settings', (req, res) => {
     const raw = req.body && req.body.wslPollInterval;
     const val = Number(raw);
-    if (!Number.isFinite(val) || !Number.isInteger(val) || val < 500 || val > 600000) {
-      return res.status(400).json({ error: 'Interval must be an integer between 500 and 600000 ms.' });
+    if (!Number.isFinite(val) || !Number.isInteger(val) || val < 500 || val > 60000) {
+      return res.status(400).json({ error: 'Interval must be an integer between 500 and 60000 ms.' });
     }
     const data = loadData();
     data.wslPollInterval = val;
@@ -661,16 +667,7 @@ async function startServer() {
     // 设置文件监控
     setupWatcher(project.id, normalizedDir);
 
-    const info = getProjectInfo(normalizedDir);
-    res.json({
-      id: project.id,
-      name: project.name,
-      dir: project.dir,
-      appName: info.appName,
-      appEnv: info.appEnv,
-      envFiles: info.envFiles,
-      activeEnvFile: info.activeEnvFile
-    });
+    res.json(buildProjectView(project, false));
   });
 
   expressApp.delete('/api/projects/:id', (req, res) => {
@@ -678,13 +675,8 @@ async function startServer() {
     const idx = data.projects.findIndex(p => p.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: '项目不存在' });
 
-    // 清理 watcher
-    if (watchers.has(req.params.id)) {
-      const w = watchers.get(req.params.id);
-      w.close();
-      if (w._dirWatcher) w._dirWatcher.close();
-      watchers.delete(req.params.id);
-    }
+    // 清理 watcher（兼容 chokidar / WSL 轮询器，见 closeWatcher）
+    closeWatcher(req.params.id);
 
     data.projects.splice(idx, 1);
     saveData(data);
@@ -741,7 +733,7 @@ async function startServer() {
       saveData(data);
 
       const info = getProjectInfo(project.dir);
-      io.emit('env-changed', { projectId: project.id, ...info });
+      emitEnvChanged(project.id, project.dir);
       log(`[SERVER] 环境切换成功 ${project.id} -> ${envFileName}`);
       res.json({
         success: true,
@@ -1265,11 +1257,6 @@ app.on('before-quit', () => {
   if (server) {
     server.close();
   }
-  // 关闭所有 watcher
-  watchers.forEach(w => {
-    try { w.close(); } catch (e) {}
-    if (w._dirWatcher) {
-      try { w._dirWatcher.close(); } catch (e) {}
-    }
-  });
+  // 关闭所有 watcher（见 closeAllWatchers）
+  closeAllWatchers();
 });
