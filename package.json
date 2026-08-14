@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "ENV 配置操作工具",
   "license": "MIT",
+  "author": "EnvSwitch",
   "main": "electron-main.js",
   "scripts": {
     "client": "cd client && npm run dev",
@@ -12,6 +13,7 @@
     "electron-build": "node gen-icons.js && npm run build && electron-builder --win --x64",
     "electron-build-dir": "node gen-icons.js && npm run build && electron-builder --dir --win",
     "electron-build-mac": "node gen-icons.js && npm run build && electron-builder --mac --x64 --arm64",
+    "electron-build-linux": "node gen-icons.js && npm run build && electron-builder --linux --x64",
     "start": "electron ."
   },
   "dependencies": {
@@ -60,6 +62,25 @@
       ],
       "icon": "client/public/logo-mac.png",
       "category": "public.app-category.developer-tools",
+      "artifactName": "EnvSwitch-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "maintainer": "EnvSwitch",
       "artifactName": "EnvSwitch-${version}-${arch}.${ext}"
     },
     "nsis": {
