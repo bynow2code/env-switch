@@ -81,7 +81,16 @@
       ],
       "category": "Development",
       "maintainer": "EnvSwitch",
-      "artifactName": "EnvSwitch-${version}-${arch}.${ext}"
+      "artifactName": "EnvSwitch-${version}-${arch}.${ext}",
+      "icon": "client/public/logo-1024.png",
+      "desktop": {
+        "Name": "EnvSwitch",
+        "GenericName": "ENV Config Manager",
+        "Categories": "Development;Utility;",
+        "StartupWMClass": "env-switch",
+        "MimeType": []
+      },
+      "synopsis": "ENV configuration switcher for .env files"
     },
     "nsis": {
       "oneClick": true,
