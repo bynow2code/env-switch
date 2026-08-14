@@ -14,6 +14,7 @@
     "electron-build-dir": "node gen-icons.js && npm run build && electron-builder --dir --win",
     "electron-build-mac": "node gen-icons.js && npm run build && electron-builder --mac --x64 --arm64",
     "electron-build-linux": "node gen-icons.js && npm run build && electron-builder --linux --x64",
+    "electron-build-linux-appimage": "node gen-icons.js && npm run build && electron-builder --linux --x64 -c.linux.target=AppImage",
     "start": "electron ."
   },
   "dependencies": {

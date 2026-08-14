@@ -903,9 +903,230 @@ function initAutoUpdater() {
   // 打包环境：按平台分流选择更新器
   if (process.platform === 'darwin') {
     initMacUpdater();
+  } else if (process.platform === 'linux') {
+    // Linux 分两种安装形态：
+    //   - deb：文件散落系统目录、写权限属 root，应用内无法原地替换，只能「检查 + 手动下载」；
+    //   - AppImage：单文件自包含、普通用户可读写，可像 macOS 那样下载新文件 + 原子替换 + 重启。
+    // 用 process.env.APPIMAGE 区分（electron-builder 打包 AppImage 时会注入该变量指向运行中的 .AppImage）。
+    initLinuxUpdater();
   } else {
     initWinUpdater();
   }
+}
+
+// ==================== Linux：deb 引导手动下载 / AppImage 应用内自更新 ====================
+// Linux 分两种安装形态，策略不同：
+//   - deb：文件散落系统目录、写权限属 root，应用内无法原地替换。仅做「检查更新」告知用户，
+//          并引导去 GitHub Releases 手动下载新 deb 覆盖安装（绝不调用 quitAndInstall，避免卡死）。
+//   - AppImage：单文件自包含、普通用户可读写。复用 macOS 思路——下载新版 .AppImage 单文件，
+//          暂时替换运行中的 .AppImage（原子重命名），再由后台脚本重启自身，实现应用内自更新。
+// 用 process.env.APPIMAGE 区分（electron-builder 打包 AppImage 时注入，指向运行中的 .AppImage 路径）。
+const LINUX_RELEASES_URL = 'https://github.com/bynow2code/env-switch/releases'
+const isAppImage = !!process.env.APPIMAGE   // 仅 AppImage 运行时该变量存在
+
+function initLinuxUpdater() {
+  const https = require('https');
+  const { shell } = require('electron');
+  const { spawn } = require('child_process');
+
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-event', payload);
+  };
+
+  // 简单 semver 比较
+  const cmpVersion = (a, b) => {
+    const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0, y = pb[i] || 0;
+      if (x !== y) return x > y ? 1 : -1;
+    }
+    return 0;
+  };
+
+  const httpsGetJson = (url) => new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'EnvSwitch', 'Accept': 'application/vnd.github+json' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpsGetJson(res.headers.location).then(resolve, reject);
+      }
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (e) { reject(new Error('解析 GitHub 响应失败: ' + e.message)); }
+      });
+    });
+    req.on('error', reject);
+  });
+
+  // 下载文件（带进度），保存到 destPath
+  const downloadFile = (url, destPath, onProgress) => new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath);
+    const req = https.get(url, { headers: { 'User-Agent': 'EnvSwitch' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close(() => {});
+        return downloadFile(res.headers.location, destPath, onProgress).then(resolve, reject);
+      }
+      const total = parseInt(res.headers['content-length'] || '0', 10);
+      let received = 0;
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (total > 0) onProgress(Math.round((received / total) * 100));
+      });
+      res.pipe(file);
+      file.on('finish', () => file.close(() => resolve(destPath)));
+    });
+    req.on('error', (e) => { file.close(() => {}); reject(e); });
+    file.on('error', (e) => { file.close(() => {}); reject(e); });
+  });
+
+  // —— AppImage 自更新专用状态 ——
+  let pendingAppImageUrl = null;   // 待下载的 .AppImage 浏览器下载地址
+  let pendingAppImageVersion = null;
+  let pendingAppImagePath = null;  // 已下载的临时 .AppImage 路径（供 start-update 原子替换）
+
+  // IPC：检查更新（带 20s 超时兜底）
+  ipcMain.handle('app:check-updates', async () => {
+    if (isChecking) { log('[UPDATE-LINUX] check-updates 忽略 - 正在检查中'); return; }
+    isChecking = true;
+    log(`[UPDATE-LINUX] check-updates 开始 …（isAppImage=${isAppImage}）`);
+    send({ type: 'checking' });
+    try {
+      const rel = await Promise.race([
+        httpsGetJson(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('检查更新超时（可能网络无法访问 GitHub）')), 20000))
+      ]);
+      const current = app.getVersion();
+      const latest = String(rel.tag_name || '').replace(/^v/, '');
+      if (!latest || cmpVersion(latest, current) <= 0) {
+        log(`[UPDATE-LINUX] 已是最新版本 ${current}`);
+        send({ type: 'not-available', version: current });
+        return;
+      }
+
+      if (isAppImage) {
+        // 匹配当前架构的 .AppImage 资产（x64/arm64 由 artifactName 不含 arch 此处统一用 .AppImage）
+        const assets = Array.isArray(rel.assets) ? rel.assets : [];
+        const asset = assets.find(a => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.appimage'));
+        if (!asset) {
+          log(`[UPDATE-LINUX] 发现新版本 ${latest}，但未找到 .AppImage 更新包`);
+          send({ type: 'error', message: `未找到可用的 AppImage 更新包，请手动前往下载页安装` });
+          return;
+        }
+        pendingAppImageUrl = asset.browser_download_url;
+        pendingAppImageVersion = latest;
+        log(`[UPDATE-LINUX] 发现 AppImage 新版本 ${latest}（asset: ${asset.name}）`);
+        send({
+          type: 'available',
+          version: latest,
+          releaseNotes: rel.body || '',
+          updateKind: 'appimage', // 前端据此走「下载并更新 / 重启并更新」自更新分支
+          downloadUrl: LINUX_RELEASES_URL
+        });
+      } else {
+        // deb：仅检查 + 引导手动下载
+        log(`[UPDATE-LINUX] 发现新版本 ${latest}（deb 形态，引导手动安装）`);
+        send({
+          type: 'available',
+          version: latest,
+          releaseNotes: rel.body || '',
+          manualInstall: true, // 前端据此显示「打开下载页」
+          downloadUrl: LINUX_RELEASES_URL
+        });
+      }
+    } catch (e) {
+      log(`[UPDATE-LINUX] check-updates 失败: ${e.message}`);
+      send({ type: 'error', message: e.message });
+    } finally {
+      isChecking = false;
+      log('[UPDATE-LINUX] check-updates 流程结束');
+    }
+  });
+
+  // IPC：下载更新
+  ipcMain.handle('app:download-update', async () => {
+    if (isAppImage) {
+      if (!pendingAppImageUrl) {
+        log('[UPDATE-LINUX] download-update 忽略 - 无待下载更新');
+        send({ type: 'error', message: '没有可下载的更新（请先检查更新）' });
+        return;
+      }
+      if (isDownloading) return;
+      isDownloading = true;
+      log(`[UPDATE-LINUX] download-update 开始（${pendingAppImageUrl}）`);
+      try {
+        const tmpDir = path.join(app.getPath('temp'), 'envswitch-update');
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const target = path.join(tmpDir, 'EnvSwitch-new.AppImage');
+        await downloadFile(pendingAppImageUrl, target, (percent) => {
+          log(`[UPDATE-LINUX] 下载进度 ${percent}%`);
+          send({ type: 'downloading', progress: percent });
+        });
+        // 记录已下载文件，供 start-update 原子替换
+        pendingAppImagePath = target;
+        log(`[UPDATE-LINUX] AppImage 下载完成: ${target}`);
+        send({ type: 'downloaded', version: pendingAppImageVersion });
+      } catch (e) {
+        log(`[UPDATE-LINUX] download-update 失败: ${e.message}`);
+        send({ type: 'error', message: e.message });
+      } finally {
+        isDownloading = false;
+      }
+    } else {
+      // deb：打开 Releases 下载页
+      log('[UPDATE-LINUX] download-update：打开 Releases 下载页（deb 需手动安装）');
+      try {
+        await shell.openExternal(LINUX_RELEASES_URL);
+      } catch (e) {
+        send({ type: 'error', message: e.message });
+      }
+    }
+  });
+
+  // IPC：重启并更新（仅 AppImage 生效；deb 退化打开下载页）
+  ipcMain.handle('app:start-update', async () => {
+    if (!isAppImage) {
+      log('[UPDATE-LINUX] start-update：打开 Releases 下载页（deb 需手动安装）');
+      try { await shell.openExternal(LINUX_RELEASES_URL); } catch (e) { send({ type: 'error', message: e.message }); }
+      return;
+    }
+    if (!pendingAppImagePath) {
+      log('[UPDATE-LINUX] start-update 忽略 - 尚未下载更新');
+      send({ type: 'error', message: '尚未下载更新' });
+      return;
+    }
+    try {
+      const runningAppImage = process.env.APPIMAGE; // 当前运行中的 .AppImage 绝对路径
+      log(`[UPDATE-LINUX] start-update 开始（替换 ${runningAppImage}，重启后生效）`);
+      // 后台脚本：等主进程退出 -> 保留原 AppImage 可执行位/权限 -> 原子重命名替换 -> 重启
+      const script = `#!/bin/bash
+set -e
+PID="${process.pid}"
+NEW_IMG="${pendingAppImagePath}"
+OLD_IMG="${runningAppImage}"
+
+for i in $(seq 1 60); do
+  if ! kill -0 "$PID" 2>/dev/null; then break; fi
+  sleep 0.5
+done
+sleep 0.5
+
+# 沿用原 AppImage 的权限位（含可执行），保证替换后可直接运行
+chmod --reference="$OLD_IMG" "$NEW_IMG" 2>/dev/null || chmod +x "$NEW_IMG"
+mv -f "$NEW_IMG" "$OLD_IMG"
+exec "$OLD_IMG" "$@"
+`;
+      const scriptPath = path.join(app.getPath('temp'), 'envswitch-update', 'install-appimage.sh');
+      fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+      fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+      log(`[UPDATE-LINUX] 后台替换脚本已写入 ${scriptPath}，即将退出并交由脚本替换 AppImage`);
+      spawn('bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref();
+      app.quit();
+    } catch (e) {
+      log(`[UPDATE-LINUX] start-update 失败: ${e.message}`);
+      send({ type: 'error', message: e.message });
+    }
+  });
 }
 
 // ==================== Windows：electron-updater（NSIS 流程，未签名可用） ====================

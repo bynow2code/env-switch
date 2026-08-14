@@ -471,7 +471,14 @@ function App() {
             break
           case 'available':
             setUpdateState('available')
-            setUpdateInfo({ version: data.version, releaseNotes: data.releaseNotes || '' })
+            // 合并更新信息；manualInstall=deb 引导手动下载，updateKind='appimage' 走应用内自更新
+            setUpdateInfo(prev => ({
+              ...prev,
+              version: data.version,
+              releaseNotes: data.releaseNotes || '',
+              manualInstall: !!data.manualInstall,
+              updateKind: data.updateKind || ''
+            }))
             break
           case 'not-available':
             setUpdateState('not-available')
@@ -801,7 +808,13 @@ function App() {
                       }}
                     />
                   )}
-                  <p className="update-hint">是否下载并安装此更新？</p>
+                  {updateInfo.manualInstall ? (
+                    <p className="update-hint">Linux (deb) 暂不支持应用内自动更新。请点击下方按钮前往下载页，手动下载新的 .deb 覆盖安装。</p>
+                  ) : updateInfo.updateKind === 'appimage' ? (
+                    <p className="update-hint">检测到 AppImage 安装，可应用内自动更新。是否下载并安装此更新？</p>
+                  ) : (
+                    <p className="update-hint">是否下载并安装此更新？</p>
+                  )}
                 </div>
               )}
               {updateState === 'downloading' && (
@@ -829,7 +842,12 @@ function App() {
               )}
             </div>
             <div className="dialog-actions">
-              {updateState === 'downloaded' ? (
+              {updateInfo.manualInstall ? (
+                <>
+                  <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>稍后</button>
+                  <button className="btn-confirm" onClick={handleDownloadUpdate}>打开下载页</button>
+                </>
+              ) : updateState === 'downloaded' ? (
                 <>
                   <button className="btn-cancel" onClick={() => setShowUpdateModal(false)}>稍后</button>
                   <button className="btn-confirm" onClick={handleStartUpdate}>重启并更新</button>
